@@ -26,6 +26,7 @@
 // https://docs.microsoft.com/en-us/windows/win32/direct3ddds/dds-pixelformat
 // https://docs.microsoft.com/en-us/windows/win32/direct3d10/d3d10-graphics-programming-guide-resources-block-compression
 // https://docs.microsoft.com/en-us/windows/uwp/graphics-concepts/opaque-and-1-bit-alpha-textures
+// https://learn.microsoft.com/en-us/windows/win32/api/dxgiformat/ne-dxgiformat-dxgi_format
 
 #include <KIO/ThumbCreator>
 #include <QFile>
@@ -35,6 +36,12 @@
 #include <cassert>
 #include <cstdint>
 #include <iostream>
+
+#ifndef NDEBUG
+#define LOG( msg ) qWarning() << ( msg );
+#else
+#define LOG( msg ) {}
+#endif
 
 static constexpr uint16_t c_16rmask = 0b1111100000000000;
 static constexpr uint16_t c_16gmask = 0b0000011111100000;
@@ -117,6 +124,15 @@ struct DDSHeader {
     uint32_t reserved2 = 0;
 };
 static_assert( sizeof( DDSHeader ) == 128 );
+
+struct DXGIHeader {
+    uint32_t format = 0;
+    uint32_t dimension = 0;
+    uint32_t flags = 0;
+    uint32_t arraySize = 0;
+    uint32_t flags2 = 0;
+};
+static_assert( sizeof( DXGIHeader ) == 20 );
 
 static uint32_t unpackRGB565( uint32_t color )
 {
@@ -309,48 +325,18 @@ template<typename T>
 static QVector<T> readBlocks( QFile* file, uint32_t pixelCount )
 {
     assert( file );
+    const qint64 blocksToRead = pixelCount / 16;
+    const qint64 bytesToRead = blocksToRead * sizeof( T );
+    if ( file->bytesAvailable() < bytesToRead ) {
+        LOG( "File truncated, not enough data to read" );
+        return {};
+    }
+
     QVector<T> blocks{};
-    blocks.resize( pixelCount / 16 );
-    assert( static_cast<qint64>( blocks.size() * sizeof( T ) ) <= file->size() );
-    file->read( reinterpret_cast<char*>( blocks.data() ), sizeof( T ) * blocks.size() );
+    blocks.resize( blocksToRead );
+    file->read( reinterpret_cast<char*>( blocks.data() ), bytesToRead );
     file->close();
     return blocks;
-}
-
-static QVector<uint32_t> decompressBC( const DDSHeader& header, QFile* file )
-{
-    assert( file );
-    assert( header.pixelFormat.flags == PixelFormat::fFourCC );
-
-    // block compression requires texels with 4x4 extent
-    if ( header.width % 4 || header.height % 4 ) {
-        return {};
-    }
-
-    QVector<uint32_t> pixels{};
-    pixels.resize( header.width * header.height );
-
-    switch ( header.pixelFormat.fourCC ) {
-    case '1TXD': {
-        QVector<BC1> blocks = readBlocks<BC1>( file, header.width * header.height );
-        std::generate( pixels.begin(), pixels.end(), Decompressor<BC1>( std::move( blocks ), header.width, header.height ) );
-    } break;
-
-    case '3TXD': {
-        QVector<BC2> blocks = readBlocks<BC2>( file, header.width * header.height );
-        std::generate( pixels.begin(), pixels.end(), Decompressor<BC2>( std::move( blocks ), header.width, header.height ) );
-    } break;
-
-    case '5TXD': {
-        QVector<BC3> blocks = readBlocks<BC3>( file, header.width * header.height );
-        std::generate( pixels.begin(), pixels.end(), Decompressor<BC3>( std::move( blocks ), header.width, header.height ) );
-    } break;
-
-    default:
-        return {};
-    }
-
-    return pixels;
 }
 
 struct Byte3 {
@@ -407,11 +393,96 @@ struct Deswizzler {
     }
 };
 
+template <typename TBlockType>
+static QVector<uint32_t> blockDecompress( const DDSHeader& header, QFile* file )
+{
+    assert( file );
+
+    // block compression requires texels with 4x4 extent
+    if ( header.width % 4 || header.height % 4 ) {
+        LOG( "Image width or height value is not multiplication of 4, necessary for bc compression" );
+        return {};
+    }
+
+    QVector<TBlockType> blocks = readBlocks<TBlockType>( file, header.width * header.height );
+    if ( blocks.empty() ) {
+        return {};
+    }
+
+    QVector<uint32_t> pixels{};
+    pixels.resize( header.width * header.height );
+    std::generate( pixels.begin(), pixels.end(), Decompressor<TBlockType>( std::move( blocks ), header.width, header.height ) );
+    return pixels;
+}
+
+static QVector<uint32_t> copyDeswizzle( const DDSHeader& header, QFile* file, Deswizzler deswizzler )
+{
+    assert( file );
+
+    const qint64 bytesToRead = header.width * header.height * sizeof( uint32_t );
+    if ( file->bytesAvailable() < bytesToRead ) {
+        LOG( "File truncated, not enough data to read" );
+        return {};
+    }
+
+    QVector<uint32_t> pixels{};
+    pixels.resize( header.width * header.height );
+    file->read( reinterpret_cast<char*>( pixels.data() ), bytesToRead );
+    file->close();
+    std::transform( pixels.begin(), pixels.end(), pixels.begin(), deswizzler );
+    return pixels;
+}
+
+static QVector<uint32_t> handleFourCC( const DDSHeader& header, QFile* file )
+{
+    assert( file );
+    assert( header.pixelFormat.flags == PixelFormat::fFourCC );
+
+    switch ( header.pixelFormat.fourCC ) {
+    case '1TXD': return blockDecompress<BC1>( header, file );
+    case '3TXD': return blockDecompress<BC2>( header, file );
+    case '5TXD': return blockDecompress<BC3>( header, file );
+    case '01XD': break;
+    default:
+        LOG( "Unknown fourCC value" );
+        return {};
+    }
+
+    if ( file->bytesAvailable() < static_cast<qint64>( sizeof( DXGIHeader ) ) ) {
+        LOG( "File truncated, not enough data to read dxgi header" );
+        return {};
+    }
+
+    DXGIHeader dxgiHeader{};
+    file->read( reinterpret_cast<char*>( &dxgiHeader ), sizeof( DXGIHeader ) );
+    if ( dxgiHeader.dimension != 3 /* texture 2d */ ) {
+        LOG( "Unsupported dimension - expected texture 2D" );
+        return {};
+    }
+
+    enum Format : uint32_t {
+        DXGI_FORMAT_BC1_UNORM = 71,
+        DXGI_FORMAT_BC2_UNORM = 74,
+        DXGI_FORMAT_BC3_UNORM = 77,
+        DXGI_FORMAT_B8G8R8A8_UNORM = 87,
+    };
+
+    switch ( dxgiHeader.format ) {
+    case DXGI_FORMAT_BC1_UNORM: return blockDecompress<BC1>( header, file );
+    case DXGI_FORMAT_BC2_UNORM: return blockDecompress<BC2>( header, file );
+    case DXGI_FORMAT_BC3_UNORM: return blockDecompress<BC3>( header, file );
+    case DXGI_FORMAT_B8G8R8A8_UNORM: return copyDeswizzle( header, file, { 0x00FF0000u, 0x0000FF00u, 0x00000000FFu, 0xFF000000u } );
+    default:
+        LOG( "Unsupported dxgi format, maybe TODO" );
+        return {};
+    }
+}
+
 static QVector<uint32_t> extractUncompressedPixels( const DDSHeader& header, QFile* file )
 {
     assert( file );
     if ( !( header.pixelFormat.flags & PixelFormat::fRGB ) ) {
-        // non-color images not supported, maybe TODO
+        LOG( "Non-color images not supported, maybe TODO" );
         return {};
     }
 
@@ -421,29 +492,45 @@ static QVector<uint32_t> extractUncompressedPixels( const DDSHeader& header, QFi
         , header.pixelFormat.bitmaskA
     );
 
-    QVector<uint32_t> pixels{};
-    pixels.resize( header.width * header.height );
 
     switch ( header.pixelFormat.rgbBitCount ) {
     case 24: {
+        const qint64 bytesToRead = header.width * header.height * sizeof( Byte3 );
+        if ( file->bytesAvailable() < bytesToRead ) {
+            LOG( "File truncated, not enough data to read" );
+            return {};
+        }
         QVector<Byte3> tmp{};
         tmp.resize( header.width * header.height );
-        file->read( reinterpret_cast<char*>( tmp.data() ), tmp.size() * sizeof( Byte3 ) );
+        file->read( reinterpret_cast<char*>( tmp.data() ), bytesToRead );
+        file->close();
+
+        QVector<uint32_t> pixels{};
+        pixels.resize( header.width * header.height );
         deswizzler.aFill = 255;
         std::transform( tmp.begin(), tmp.end(), pixels.begin(), deswizzler );
         return pixels;
     }
-    case 32:
+    case 32: {
         if ( !( header.pixelFormat.flags & ( PixelFormat::fAlpha | PixelFormat::fAlphaPixels ) ) ) {
-            // TODO: suspicious pixel format
+            LOG( "Suspicious pixel format, maybe TODO" );
             return {};
         }
-        file->read( reinterpret_cast<char*>( pixels.data() ), pixels.size() * sizeof( uint32_t ) );
+
+        const qint64 bytesToRead = header.width * header.height * sizeof( uint32_t );
+        if ( file->bytesAvailable() < bytesToRead ) {
+            LOG( "File truncated, not enough data to read" );
+            return {};
+        }
+
+        QVector<uint32_t> pixels{};
+        pixels.resize( header.width * header.height );
+        file->read( reinterpret_cast<char*>( pixels.data() ), bytesToRead );
         std::transform( pixels.begin(), pixels.end(), pixels.begin(), deswizzler );
         return pixels;
-
+    }
     default:
-        // TODO: suspicious pixel format
+        LOG( "Suspicious pixel format, maybe TODO" );
         return {};
 
     }
@@ -452,38 +539,46 @@ static QVector<uint32_t> extractUncompressedPixels( const DDSHeader& header, QFi
 bool DDSThumbnail::create( const QString& path, int width, int height, QImage& img )
 {
     QFile file{ path };
-    if ( file.size() < static_cast<qint32>( sizeof( DDSHeader ) ) ) {
+    if ( file.size() < static_cast<qint64>( sizeof( DDSHeader ) ) ) {
+        LOG( "File truncated, expected at least 128 bytes" );
         return false;
     }
     if ( !file.open( QIODevice::ReadOnly ) ) {
+        LOG( "File not readable" );
         return false;
     }
 
     DDSHeader header{};
     file.read( reinterpret_cast<char*>( &header ), sizeof( DDSHeader ) );
     if ( header.magic != DDSHeader::c_magic ) {
+        LOG( "Magic field not 'DDS '" );
+        return false;
+    }
+
+    if ( header.size != 124 ) {
+        LOG( "Header .size not 124" );
         return false;
     }
 
     static constexpr auto mustHaveFlags = DDSHeader::fCaps | DDSHeader::fHeight | DDSHeader::fWidth | DDSHeader::fPixelFormat;
     if ( ( header.flags & mustHaveFlags ) != mustHaveFlags ) {
+        LOG( "Missing .flags ( caps | width | height | pixelformat )" );
         return false;
     }
     if ( ( header.caps & DDSHeader::Caps::fTexture ) != DDSHeader::Caps::fTexture ) {
+        LOG( "Missing .caps flag ( texture )" );
         return false;
     }
 
-    const bool isCompressed = header.pixelFormat.flags == PixelFormat::fFourCC;
-    QVector<uint32_t> pixels = isCompressed
-        ? decompressBC( header, &file )
+    const bool isFourCC = header.pixelFormat.flags == PixelFormat::fFourCC;
+    QVector<uint32_t> pixels = isFourCC
+        ? handleFourCC( header, &file )
         : extractUncompressedPixels( header, &file );
 
     if ( pixels.empty() ) {
-#ifndef NDEBUG
-        std::cerr << "failed to generate thumbnail for: " << path.toLocal8Bit().data() << std::endl;
-#endif
         return false;
     }
+
     QImage image{ reinterpret_cast<const uchar*>( pixels.data() )
         , static_cast<int>( header.width )
         , static_cast<int>( header.height )
