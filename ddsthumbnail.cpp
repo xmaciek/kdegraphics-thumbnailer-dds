@@ -38,7 +38,7 @@
 #include <iostream>
 
 #ifndef NDEBUG
-#define LOG( msg ) qWarning() << ( msg );
+#define LOG( msg ) std::cerr << ( msg );
 #else
 #define LOG( msg ) {}
 #endif
