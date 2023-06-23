@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<component type="addon">
+  <id>xmaciek.kdegraphics-thumbnailer-dds</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <extends>org.kde.dolphin.desktop</extends>
+  <extends>org.kde.konqueror.desktop</extends>
+  <extends>org.kde.krusader.desktop</extends>
+  <extends>org.kde.gwenview.desktop</extends>
+  <name>kdegraphics-thumbnailer-dds</name>
+  <summary>Microsoft DirectDraw surface thumbnailer.</summary>
+  <description>
+    <p>This plugin generates thumbnails for Microsoft DirectDraw surface textures in KDE applications.</p>
+  </description>
+  <url type="homepage">https://github.com/xmaciek/kdegraphics-thumbnailer-dds</url>
+  <url type="bugtracker">https://github.com/xmaciek/kdegraphics-thumbnailer-dds/issues</url>
+  <screenshots>
+    <screenshot type="default">
+      <image>TODO</image>
+      <caption>TODO</caption>
+    </screenshot>
+  </screenshots>
+  <categories>
+    <category>Graphics</category>
+  </categories>
+  <icon type="stock">application-postscript</icon>
+</component>

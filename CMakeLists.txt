@@ -19,14 +19,14 @@ find_package( Qt${QT_MAJOR_VERSION} ${QT_MIN_VERSION} CONFIG REQUIRED COMPONENTS
 find_package( KF5 ${KF5_MIN_VERSION} REQUIRED COMPONENTS KIO )
 add_definitions( -DQT_USE_QSTRINGBUILDER )
 
-add_library( ddsthumbnail MODULE )
+kcoreaddons_add_plugin( ddsthumbnail INSTALL_NAMESPACE "kf${QT_MAJOR_VERSION}/thumbcreator" )
 
 target_sources( ddsthumbnail PRIVATE
     ddsthumbnail.cpp
 )
 
 target_link_libraries( ddsthumbnail
-    KF5::KIOWidgets
+    KF${QT_MAJOR_VERSION}::KIOGui
     Qt::Gui
 )
 
