@@ -28,7 +28,8 @@
 // https://docs.microsoft.com/en-us/windows/uwp/graphics-concepts/opaque-and-1-bit-alpha-textures
 // https://learn.microsoft.com/en-us/windows/win32/api/dxgiformat/ne-dxgiformat-dxgi_format
 
-#include <KIO/ThumbCreator>
+#include <KPluginFactory>
+#include <KIO/ThumbnailCreator>
 #include <QFile>
 #include <QImage>
 
@@ -47,25 +48,20 @@ static constexpr uint16_t c_16rmask = 0b1111100000000000;
 static constexpr uint16_t c_16gmask = 0b0000011111100000;
 static constexpr uint16_t c_16bmask = 0b0000000000011111;
 
-class DDSThumbnail : public ThumbCreator
+class DDSThumbnailCreator : public KIO::ThumbnailCreator
 {
 public:
-    DDSThumbnail() = default;
-    ~DDSThumbnail() override = default;
-    bool create( const QString& path, int width, int height, QImage& ) override;
-    Flags flags() const override;
+    DDSThumbnailCreator(QObject *parent, const QVariantList &args)
+        : KIO::ThumbnailCreator(parent, args)
+    {
+    }
+
+    ~DDSThumbnailCreator() override = default;
+
+    KIO::ThumbnailResult create(const KIO::ThumbnailRequest &request) override;
 };
 
-extern "C" Q_DECL_EXPORT ThumbCreator* new_creator()
-{
-    return new DDSThumbnail{};
-}
-
-ThumbCreator::Flags DDSThumbnail::flags() const
-{
-    return {};
-}
-
+K_PLUGIN_CLASS_WITH_JSON(DDSThumbnailCreator, "ddsthumbnail.json")
 
 struct PixelFormat {
     enum Flags : uint32_t {
@@ -536,38 +532,38 @@ static QVector<uint32_t> extractUncompressedPixels( const DDSHeader& header, QFi
     }
 }
 
-bool DDSThumbnail::create( const QString& path, int width, int height, QImage& img )
+KIO::ThumbnailResult DDSThumbnailCreator::create(const KIO::ThumbnailRequest &request)
 {
-    QFile file{ path };
+    QFile file{ request.url().toLocalFile() };
     if ( file.size() < static_cast<qint64>( sizeof( DDSHeader ) ) ) {
         LOG( "File truncated, expected at least 128 bytes" );
-        return false;
+        return KIO::ThumbnailResult::fail();
     }
     if ( !file.open( QIODevice::ReadOnly ) ) {
         LOG( "File not readable" );
-        return false;
+        return KIO::ThumbnailResult::fail();
     }
 
     DDSHeader header{};
     file.read( reinterpret_cast<char*>( &header ), sizeof( DDSHeader ) );
     if ( header.magic != DDSHeader::c_magic ) {
         LOG( "Magic field not 'DDS '" );
-        return false;
+        return KIO::ThumbnailResult::fail();
     }
 
     if ( header.size != 124 ) {
         LOG( "Header .size not 124" );
-        return false;
+        return KIO::ThumbnailResult::fail();
     }
 
     static constexpr auto mustHaveFlags = DDSHeader::fCaps | DDSHeader::fHeight | DDSHeader::fWidth | DDSHeader::fPixelFormat;
     if ( ( header.flags & mustHaveFlags ) != mustHaveFlags ) {
         LOG( "Missing .flags ( caps | width | height | pixelformat )" );
-        return false;
+        return KIO::ThumbnailResult::fail();
     }
     if ( ( header.caps & DDSHeader::Caps::fTexture ) != DDSHeader::Caps::fTexture ) {
         LOG( "Missing .caps flag ( texture )" );
-        return false;
+        return KIO::ThumbnailResult::fail();
     }
 
     const bool isFourCC = header.pixelFormat.flags == PixelFormat::fFourCC;
@@ -576,7 +572,7 @@ bool DDSThumbnail::create( const QString& path, int width, int height, QImage& i
         : extractUncompressedPixels( header, &file );
 
     if ( pixels.empty() ) {
-        return false;
+        return KIO::ThumbnailResult::fail();
     }
 
     QImage image{ reinterpret_cast<const uchar*>( pixels.data() )
@@ -586,6 +582,11 @@ bool DDSThumbnail::create( const QString& path, int width, int height, QImage& i
         , nullptr // non-owning qimage
         , nullptr
     };
-    img = image.scaled( width, height, Qt::KeepAspectRatio );
-    return true;
+    return KIO::ThumbnailResult::pass(image.scaled(
+        request.targetSize().width(),
+        request.targetSize().height(),
+        Qt::KeepAspectRatio
+    ));
 }
+
+#include "ddsthumbnail.moc"
