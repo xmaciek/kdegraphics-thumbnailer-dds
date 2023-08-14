@@ -13,8 +13,13 @@ At some point I got considerably annoyed that KDE does not support DDS files sin
 * BC1_UNORM
 * BC2_UNORM
 * BC3_UNORM
+* B5G6R5_UNORM
+* B5G5R5A1_UNORM
 * B8G8R8A8_UNORM
+* R8_UNORM
 
 #### Notes:
 You might want to manually adjust CMake variable `KDE_INSTALL_PLUGINDIR` because reasons.
 Possible correct path is `/usr/lib/qt/plugins/`
+
+Clearing thumbnail directory via `rm -r $HOME/.cache/thumbnails/*`

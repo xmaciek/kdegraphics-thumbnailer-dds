@@ -36,17 +36,18 @@
 #include <algorithm>
 #include <cassert>
 #include <cstdint>
-#include <iostream>
 
 #ifndef NDEBUG
+#include <iostream>
 #define LOG( msg ) std::cerr << ( msg );
 #else
 #define LOG( msg ) {}
 #endif
 
-static constexpr uint16_t c_16rmask = 0b1111100000000000;
-static constexpr uint16_t c_16gmask = 0b0000011111100000;
-static constexpr uint16_t c_16bmask = 0b0000000000011111;
+
+static constexpr uint16_t MASK_R5G6B5_R = 0b1111100000000000;
+static constexpr uint16_t MASK_R5G6B5_G = 0b0000011111100000;
+static constexpr uint16_t MASK_R5G6B5_B = 0b0000000000011111;
 
 class DDSThumbnailCreator : public KIO::ThumbnailCreator
 {
@@ -62,6 +63,67 @@ public:
 };
 
 K_PLUGIN_CLASS_WITH_JSON(DDSThumbnailCreator, "ddsthumbnail.json")
+
+
+namespace colorfn {
+
+static uint32_t makeARGB8888( uint32_t r, uint32_t g, uint32_t b, uint32_t a )
+{
+    return ( a << 24 ) | ( r << 16 ) | ( g << 8 ) | b;
+}
+
+
+// NOTE: Happy endianness
+//       DXGI_FORMAT_B8G8R8A8_UNORM == QImage::Format_ARGB32
+static uint32_t noconv( uint32_t c )
+{
+    return c;
+}
+
+static uint32_t b5g5r5a1( uint16_t c )
+{
+    uint32_t r = ( c >> 1 ) & 0b11111;
+    uint32_t g = ( c >> 6 ) & 0b11111;
+    uint32_t b = c >> 11;
+    uint32_t a = c & 1 ? 0xFF : 0;
+
+    r = ( r << 3 ) | ( r >> 2 );
+    g = ( g << 3 ) | ( g >> 2 );
+    b = ( b << 3 ) | ( b >> 2 );
+    return makeARGB8888( r, g, b, a );
+}
+
+static uint32_t b5g6r5( uint16_t c )
+{
+    uint32_t r = c & 0b11111;
+    uint32_t g = ( c >> 5 ) & 0b111111;
+    uint32_t b = c >> 11;
+
+    r = ( r << 3 ) | ( r >> 2 );
+    g = ( g << 2 ) | ( g >> 4 );
+    b = ( b << 3 ) | ( b >> 2 );
+    return makeARGB8888( r, g, b, 0xFF );
+}
+
+static uint32_t r5g6b5( uint16_t c )
+{
+    uint32_t r = c >> 11;
+    uint32_t g = ( c >> 5 ) & 0b111111;
+    uint32_t b = c & 0b11111;
+
+    r = ( r << 3 ) | ( r >> 2 );
+    g = ( g << 2 ) | ( g >> 4 );
+    b = ( b << 3 ) | ( b >> 2 );
+    return makeARGB8888( r, g, b, 0xFF );
+}
+
+static uint32_t r8( uint8_t c )
+{
+    return makeARGB8888( c, c, c, 0xFF );
+}
+
+}
+
 
 struct PixelFormat {
     enum Flags : uint32_t {
@@ -130,17 +192,6 @@ struct DXGIHeader {
 };
 static_assert( sizeof( DXGIHeader ) == 20 );
 
-static uint32_t unpackRGB565( uint32_t color )
-{
-    const uint32_t r = ( color & c_16rmask ) >> 11;
-    const uint32_t g = ( color & c_16gmask ) >> 5;
-    const uint32_t b = ( color & c_16bmask );
-    // main color component | substituted missing color bits
-    return ( ( ( r << 3 ) | ( r & 0b111 ) ) << 16 )
-         | ( ( ( g << 2 ) | ( g & 0b011 ) ) << 8 )
-         | ( ( ( b << 3 ) | ( b & 0b111 ) ) );
-}
-
 static uint32_t lerp( uint32_t a, uint32_t b, float f )
 {
     const float d = static_cast<float>( b ) - static_cast<float>( a );
@@ -149,21 +200,21 @@ static uint32_t lerp( uint32_t a, uint32_t b, float f )
 
 static uint16_t lerp565( uint16_t lhs, uint16_t rhs, float f )
 {
-    const float r0 = ( lhs & c_16rmask ) >> 11;
-    const float r1 = ( rhs & c_16rmask ) >> 11;
-    const float g0 = ( lhs & c_16gmask ) >> 5;
-    const float g1 = ( rhs & c_16gmask ) >> 5;
-    const float b0 = ( lhs & c_16bmask );
-    const float b1 = ( rhs & c_16bmask );
+    const float r0 = ( lhs & MASK_R5G6B5_R ) >> 11;
+    const float r1 = ( rhs & MASK_R5G6B5_R ) >> 11;
+    const float g0 = ( lhs & MASK_R5G6B5_G ) >> 5;
+    const float g1 = ( rhs & MASK_R5G6B5_G ) >> 5;
+    const float b0 = ( lhs & MASK_R5G6B5_B );
+    const float b1 = ( rhs & MASK_R5G6B5_B );
     const float rd = r1 - r0;
     const float gd = g1 - g0;
     const float bd = b1 - b0;
     const uint16_t r = r0 + rd * f;
     const uint16_t g = g0 + gd * f;
     const uint16_t b = b0 + bd * f;
-    return ( ( r << 11 ) & c_16rmask )
-        | ( ( g << 5 ) & c_16gmask )
-        | ( b & c_16bmask );
+    return ( ( r << 11 ) & MASK_R5G6B5_R )
+        | ( ( g << 5 ) & MASK_R5G6B5_G )
+        | ( b & MASK_R5G6B5_B );
 }
 
 template<typename T>
@@ -211,16 +262,15 @@ struct BC1 {
 
     uint32_t colorFromIndex( uint32_t i ) const
     {
-        static constexpr uint32_t alpha = 0xFF000000;
         switch ( i ) {
-        case 0: return alpha | unpackRGB565( color0 );
-        case 1: return alpha | unpackRGB565( color1 );
+        case 0: return colorfn::r5g6b5( color0 );
+        case 1: return colorfn::r5g6b5( color1 );
         case 2: return color0 < color1
-            ? alpha | unpackRGB565( lerp565( color0, color1, 0.333f ) )
-            : alpha | unpackRGB565( lerp565( color0, color1, 0.5f ) );
+            ? colorfn::r5g6b5( lerp565( color0, color1, 0.333f ) )
+            : colorfn::r5g6b5( lerp565( color0, color1, 0.5f ) );
         case 3: return color0 < color1
             ? 0u
-            : alpha | unpackRGB565( lerp565( color0, color1, 0.667f ) );
+            : colorfn::r5g6b5( lerp565( color0, color1, 0.667f ) );
         default: return 0;
         }
     }
@@ -250,11 +300,12 @@ struct BC2 {
 
     uint32_t colorFromIndex( uint32_t i ) const
     {
+        const uint32_t removeAlpha = 0x00FFFFFF;
         switch ( i ) {
-        case 0: return unpackRGB565( color0 );
-        case 1: return unpackRGB565( color1 );
-        case 2: return unpackRGB565( lerp565( color0, color1, 0.333f ) );
-        case 3: return unpackRGB565( lerp565( color0, color1, 0.667f ) );
+        case 0: return colorfn::r5g6b5( color0 ) & removeAlpha;
+        case 1: return colorfn::r5g6b5( color1 ) & removeAlpha;
+        case 2: return colorfn::r5g6b5( lerp565( color0, color1, 0.333f ) ) & removeAlpha;
+        case 3: return colorfn::r5g6b5( lerp565( color0, color1, 0.667f ) ) & removeAlpha;
         default: return 0;
         }
     }
@@ -306,11 +357,12 @@ struct BC3 {
 
     uint32_t colorFromIndex( uint32_t i ) const
     {
+        const uint32_t removeAlpha = 0x00FFFFFF;
         switch ( i ) {
-        case 0: return unpackRGB565( color0 );
-        case 1: return unpackRGB565( color1 );
-        case 2: return unpackRGB565( lerp565( color0, color1, 0.333f ) );
-        case 3: return unpackRGB565( lerp565( color0, color1, 0.667f ) );
+        case 0: return colorfn::r5g6b5( color0 ) & removeAlpha;
+        case 1: return colorfn::r5g6b5( color1 ) & removeAlpha;
+        case 2: return colorfn::r5g6b5( lerp565( color0, color1, 0.333f ) ) & removeAlpha;
+        case 3: return colorfn::r5g6b5( lerp565( color0, color1, 0.667f ) ) & removeAlpha;
         default: return 0;
         }
     }
@@ -380,7 +432,7 @@ struct Deswizzler {
         uint32_t g = ( v & gMask ) >> gShift;
         uint32_t b = ( v & bMask ) >> bShift;
         uint32_t a = ( v & aMask ) >> aShift;
-        return ( ( aFill | a ) << 24 ) | ( r << 16 ) | ( g << 8 ) | b;
+        return colorfn::makeARGB8888( r, g, b, aFill | a );
     }
 
     uint32_t operator () ( Byte3 v ) const
@@ -411,22 +463,30 @@ static QVector<uint32_t> blockDecompress( const DDSHeader& header, QFile* file )
     return pixels;
 }
 
-static QVector<uint32_t> copyDeswizzle( const DDSHeader& header, QFile* file, Deswizzler deswizzler )
+
+template <typename TSrc, uint32_t(*fn)(TSrc)>
+static QVector<uint32_t> readAndConvert( const DDSHeader& header, QFile* file )
 {
     assert( file );
 
-    const qint64 bytesToRead = header.width * header.height * sizeof( uint32_t );
+    const uint32_t pixelCount = header.width * header.height;
+    const qint64 bytesToRead = pixelCount * sizeof( TSrc );
     if ( file->bytesAvailable() < bytesToRead ) {
         LOG( "File truncated, not enough data to read" );
         return {};
     }
 
-    QVector<uint32_t> pixels{};
-    pixels.resize( header.width * header.height );
-    file->read( reinterpret_cast<char*>( pixels.data() ), bytesToRead );
+    QVector<TSrc> srcPixels{};
+    srcPixels.resize( pixelCount );
+    file->read( reinterpret_cast<char*>( srcPixels.data() ), bytesToRead );
     file->close();
-    std::transform( pixels.begin(), pixels.end(), pixels.begin(), deswizzler );
-    return pixels;
+
+    QVector<uint32_t> ret;
+    ret.resize( pixelCount );
+    const TSrc* begin = reinterpret_cast<const TSrc*>( srcPixels.data() );
+    const TSrc* end = begin + pixelCount;
+    std::transform( begin, end, ret.data(), fn );
+    return ret;
 }
 
 static QVector<uint32_t> handleFourCC( const DDSHeader& header, QFile* file )
@@ -457,9 +517,12 @@ static QVector<uint32_t> handleFourCC( const DDSHeader& header, QFile* file )
     }
 
     enum Format : uint32_t {
+        DXGI_FORMAT_R8_UNORM = 61,
         DXGI_FORMAT_BC1_UNORM = 71,
         DXGI_FORMAT_BC2_UNORM = 74,
         DXGI_FORMAT_BC3_UNORM = 77,
+        DXGI_FORMAT_B5G6R5_UNORM = 85,
+        DXGI_FORMAT_B5G5R5A1_UNORM = 86,
         DXGI_FORMAT_B8G8R8A8_UNORM = 87,
     };
 
@@ -467,7 +530,10 @@ static QVector<uint32_t> handleFourCC( const DDSHeader& header, QFile* file )
     case DXGI_FORMAT_BC1_UNORM: return blockDecompress<BC1>( header, file );
     case DXGI_FORMAT_BC2_UNORM: return blockDecompress<BC2>( header, file );
     case DXGI_FORMAT_BC3_UNORM: return blockDecompress<BC3>( header, file );
-    case DXGI_FORMAT_B8G8R8A8_UNORM: return copyDeswizzle( header, file, { 0x00FF0000u, 0x0000FF00u, 0x00000000FFu, 0xFF000000u } );
+    case DXGI_FORMAT_B5G5R5A1_UNORM: return readAndConvert<uint16_t, &colorfn::b5g5r5a1>( header, file );
+    case DXGI_FORMAT_B5G6R5_UNORM: return readAndConvert<uint16_t, &colorfn::b5g6r5>( header, file );
+    case DXGI_FORMAT_B8G8R8A8_UNORM: return readAndConvert<uint32_t, &colorfn::noconv>( header, file );
+    case DXGI_FORMAT_R8_UNORM: return readAndConvert<uint8_t, &colorfn::r8>( header, file );
     default:
         LOG( "Unsupported dxgi format, maybe TODO" );
         return {};
@@ -535,12 +601,14 @@ static QVector<uint32_t> extractUncompressedPixels( const DDSHeader& header, QFi
 KIO::ThumbnailResult DDSThumbnailCreator::create(const KIO::ThumbnailRequest &request)
 {
     QFile file{ request.url().toLocalFile() };
-    if ( file.size() < static_cast<qint64>( sizeof( DDSHeader ) ) ) {
-        LOG( "File truncated, expected at least 128 bytes" );
-        return KIO::ThumbnailResult::fail();
-    }
+
     if ( !file.open( QIODevice::ReadOnly ) ) {
         LOG( "File not readable" );
+        return KIO::ThumbnailResult::fail();
+    }
+
+    if ( file.size() < static_cast<qint64>( sizeof( DDSHeader ) ) ) {
+        LOG( "File truncated, expected at least 128 bytes" );
         return KIO::ThumbnailResult::fail();
     }
 
