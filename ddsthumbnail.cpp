@@ -45,10 +45,6 @@
 #endif
 
 
-static constexpr uint16_t MASK_R5G6B5_R = 0b1111100000000000;
-static constexpr uint16_t MASK_R5G6B5_G = 0b0000011111100000;
-static constexpr uint16_t MASK_R5G6B5_B = 0b0000000000011111;
-
 class DDSThumbnailCreator : public KIO::ThumbnailCreator
 {
 public:
@@ -82,10 +78,10 @@ static uint32_t noconv( uint32_t c )
 
 static uint32_t b5g5r5a1( uint16_t c )
 {
-    uint32_t r = ( c >> 1 ) & 0b11111;
-    uint32_t g = ( c >> 6 ) & 0b11111;
-    uint32_t b = c >> 11;
-    uint32_t a = c & 1 ? 0xFF : 0;
+    uint32_t a = ( c >> 15 ) ? 0xFF : 0;
+    uint32_t r = ( c >> 10 ) & 0b11111;
+    uint32_t g = ( c >> 5 ) & 0b11111;
+    uint32_t b = c & 0b11111;
 
     r = ( r << 3 ) | ( r >> 2 );
     g = ( g << 3 ) | ( g >> 2 );
@@ -94,18 +90,6 @@ static uint32_t b5g5r5a1( uint16_t c )
 }
 
 static uint32_t b5g6r5( uint16_t c )
-{
-    uint32_t r = c & 0b11111;
-    uint32_t g = ( c >> 5 ) & 0b111111;
-    uint32_t b = c >> 11;
-
-    r = ( r << 3 ) | ( r >> 2 );
-    g = ( g << 2 ) | ( g >> 4 );
-    b = ( b << 3 ) | ( b >> 2 );
-    return makeARGB8888( r, g, b, 0xFF );
-}
-
-static uint32_t r5g6b5( uint16_t c )
 {
     uint32_t r = c >> 11;
     uint32_t g = ( c >> 5 ) & 0b111111;
@@ -163,9 +147,10 @@ struct DDSHeader {
         fTexture = 0x1000,
     };
 
-    static constexpr uint32_t c_magic = ' SDD';
+    static constexpr uint32_t MAGIC = ' SDD';
+    static constexpr uint32_t SIZE = 124;
 
-    uint32_t magic = c_magic;
+    uint32_t magic = 0;
     uint32_t size = 0;
     Flags flags = {};
     uint32_t height = 0;
@@ -175,7 +160,7 @@ struct DDSHeader {
     uint32_t mipMapCount = 0;
     uint32_t reserved[ 11 ]{};
     PixelFormat pixelFormat{};
-    Caps caps = {};
+    Caps caps{};
     uint32_t caps2 = 0;
     uint32_t caps3 = 0;
     uint32_t caps4 = 0;
@@ -200,6 +185,10 @@ static uint32_t lerp( uint32_t a, uint32_t b, float f )
 
 static uint16_t lerp565( uint16_t lhs, uint16_t rhs, float f )
 {
+    static constexpr uint16_t MASK_R5G6B5_R = 0b1111100000000000;
+    static constexpr uint16_t MASK_R5G6B5_G = 0b0000011111100000;
+    static constexpr uint16_t MASK_R5G6B5_B = 0b0000000000011111;
+
     const float r0 = ( lhs & MASK_R5G6B5_R ) >> 11;
     const float r1 = ( rhs & MASK_R5G6B5_R ) >> 11;
     const float g0 = ( lhs & MASK_R5G6B5_G ) >> 5;
@@ -263,14 +252,14 @@ struct BC1 {
     uint32_t colorFromIndex( uint32_t i ) const
     {
         switch ( i ) {
-        case 0: return colorfn::r5g6b5( color0 );
-        case 1: return colorfn::r5g6b5( color1 );
+        case 0: return colorfn::b5g6r5( color0 );
+        case 1: return colorfn::b5g6r5( color1 );
         case 2: return color0 < color1
-            ? colorfn::r5g6b5( lerp565( color0, color1, 0.333f ) )
-            : colorfn::r5g6b5( lerp565( color0, color1, 0.5f ) );
+            ? colorfn::b5g6r5( lerp565( color0, color1, 0.333f ) )
+            : colorfn::b5g6r5( lerp565( color0, color1, 0.5f ) );
         case 3: return color0 < color1
             ? 0u
-            : colorfn::r5g6b5( lerp565( color0, color1, 0.667f ) );
+            : colorfn::b5g6r5( lerp565( color0, color1, 0.667f ) );
         default: return 0;
         }
     }
@@ -302,10 +291,10 @@ struct BC2 {
     {
         const uint32_t removeAlpha = 0x00FFFFFF;
         switch ( i ) {
-        case 0: return colorfn::r5g6b5( color0 ) & removeAlpha;
-        case 1: return colorfn::r5g6b5( color1 ) & removeAlpha;
-        case 2: return colorfn::r5g6b5( lerp565( color0, color1, 0.333f ) ) & removeAlpha;
-        case 3: return colorfn::r5g6b5( lerp565( color0, color1, 0.667f ) ) & removeAlpha;
+        case 0: return colorfn::b5g6r5( color0 ) & removeAlpha;
+        case 1: return colorfn::b5g6r5( color1 ) & removeAlpha;
+        case 2: return colorfn::b5g6r5( lerp565( color0, color1, 0.333f ) ) & removeAlpha;
+        case 3: return colorfn::b5g6r5( lerp565( color0, color1, 0.667f ) ) & removeAlpha;
         default: return 0;
         }
     }
@@ -359,10 +348,10 @@ struct BC3 {
     {
         const uint32_t removeAlpha = 0x00FFFFFF;
         switch ( i ) {
-        case 0: return colorfn::r5g6b5( color0 ) & removeAlpha;
-        case 1: return colorfn::r5g6b5( color1 ) & removeAlpha;
-        case 2: return colorfn::r5g6b5( lerp565( color0, color1, 0.333f ) ) & removeAlpha;
-        case 3: return colorfn::r5g6b5( lerp565( color0, color1, 0.667f ) ) & removeAlpha;
+        case 0: return colorfn::b5g6r5( color0 ) & removeAlpha;
+        case 1: return colorfn::b5g6r5( color1 ) & removeAlpha;
+        case 2: return colorfn::b5g6r5( lerp565( color0, color1, 0.333f ) ) & removeAlpha;
+        case 3: return colorfn::b5g6r5( lerp565( color0, color1, 0.667f ) ) & removeAlpha;
         default: return 0;
         }
     }
@@ -614,12 +603,12 @@ KIO::ThumbnailResult DDSThumbnailCreator::create(const KIO::ThumbnailRequest &re
 
     DDSHeader header{};
     file.read( reinterpret_cast<char*>( &header ), sizeof( DDSHeader ) );
-    if ( header.magic != DDSHeader::c_magic ) {
+    if ( header.magic != DDSHeader::MAGIC ) {
         LOG( "Magic field not 'DDS '" );
         return KIO::ThumbnailResult::fail();
     }
 
-    if ( header.size != 124 ) {
+    if ( header.size != DDSHeader::SIZE ) {
         LOG( "Header .size not 124" );
         return KIO::ThumbnailResult::fail();
     }
