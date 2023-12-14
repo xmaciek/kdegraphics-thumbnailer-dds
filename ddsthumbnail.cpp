@@ -210,13 +210,11 @@ template<typename T>
 struct Decompressor {
     QVector<T> blocks{};
     uint32_t width = 0;
-    uint32_t height = 0;
     uint32_t index = 0;
 
-    Decompressor( QVector<T>&& b, uint32_t w, uint32_t h )
+    Decompressor( QVector<T>&& b, uint32_t w )
     : blocks( std::move( b ) )
     , width{ w }
-    , height{ h }
     {}
 
     uint32_t operator () ()
@@ -359,18 +357,18 @@ struct BC3 {
 static_assert( sizeof( BC3 ) == 16, "sizeof BC3 not equal 16" );
 
 template<typename T>
-static QVector<T> readBlocks( QFile* file, uint32_t pixelCount )
+static QVector<T> readBlocks( QFile* file, qint64 pixelCount )
 {
     assert( file );
     const qint64 blocksToRead = pixelCount / 16;
     const qint64 bytesToRead = blocksToRead * sizeof( T );
     if ( file->bytesAvailable() < bytesToRead ) {
-        LOG( "File truncated, not enough data to read" );
+        LOG( "File truncated or corrupted, not enough data to read" );
         return {};
     }
 
     QVector<T> blocks{};
-    blocks.resize( blocksToRead );
+    blocks.resize( bytesToRead / sizeof( T ) );
     file->read( reinterpret_cast<char*>( blocks.data() ), bytesToRead );
     file->close();
     return blocks;
@@ -430,38 +428,50 @@ struct Deswizzler {
     }
 };
 
+struct ImageData {
+    QVector<uint32_t> pixels;
+    uint32_t width = 0;
+    uint32_t height = 0;
+    uint32_t oWidth = 0;
+    uint32_t oHeight = 0;
+    bool extentNeedsResize = false;
+};
+
 template <typename TBlockType>
-static QVector<uint32_t> blockDecompress( const DDSHeader& header, QFile* file )
+static ImageData blockDecompress( const DDSHeader& header, QFile* file )
 {
     assert( file );
 
-    // block compression requires texels with 4x4 extent
-    if ( header.width % 4 || header.height % 4 ) {
-        LOG( "Image width or height value is not multiplication of 4, necessary for bc compression" );
-        return {};
-    }
+    auto align4 = []( uint32_t v ) { return ( v + 3u ) & ~3u; };
+    const uint32_t width = align4( header.width );
+    const uint32_t height = align4( header.height );
 
-    QVector<TBlockType> blocks = readBlocks<TBlockType>( file, header.width * header.height );
+    QVector<TBlockType> blocks = readBlocks<TBlockType>( file, width * height );
     if ( blocks.empty() ) {
         return {};
     }
 
-    QVector<uint32_t> pixels{};
-    pixels.resize( header.width * header.height );
-    std::generate( pixels.begin(), pixels.end(), Decompressor<TBlockType>( std::move( blocks ), header.width, header.height ) );
-    return pixels;
+    ImageData ret{};
+    ret.pixels.resize( width * height );
+    ret.width = width;
+    ret.height = height;
+    ret.oWidth = header.width;
+    ret.oHeight = header.height;
+    ret.extentNeedsResize = ( header.width % 4 ) || ( header.height % 4 );
+    std::generate( ret.pixels.begin(), ret.pixels.end(), Decompressor<TBlockType>( std::move( blocks ), width ) );
+    return ret;
 }
 
 
 template <typename TSrc, uint32_t(*fn)(TSrc)>
-static QVector<uint32_t> readAndConvert( const DDSHeader& header, QFile* file )
+static ImageData readAndConvert( const DDSHeader& header, QFile* file )
 {
     assert( file );
 
     const uint32_t pixelCount = header.width * header.height;
     const qint64 bytesToRead = pixelCount * sizeof( TSrc );
     if ( file->bytesAvailable() < bytesToRead ) {
-        LOG( "File truncated, not enough data to read" );
+        LOG( "File truncated or corrupted, not enough data to read" );
         return {};
     }
 
@@ -470,15 +480,17 @@ static QVector<uint32_t> readAndConvert( const DDSHeader& header, QFile* file )
     file->read( reinterpret_cast<char*>( srcPixels.data() ), bytesToRead );
     file->close();
 
-    QVector<uint32_t> ret;
-    ret.resize( pixelCount );
+    ImageData ret{};
+    ret.pixels.resize( pixelCount );
+    ret.width = header.width;
+    ret.height = header.height;
     const TSrc* begin = reinterpret_cast<const TSrc*>( srcPixels.data() );
     const TSrc* end = begin + pixelCount;
-    std::transform( begin, end, ret.data(), fn );
+    std::transform( begin, end, ret.pixels.data(), fn );
     return ret;
 }
 
-static QVector<uint32_t> handleFourCC( const DDSHeader& header, QFile* file )
+static ImageData handleFourCC( const DDSHeader& header, QFile* file )
 {
     assert( file );
     assert( header.pixelFormat.flags == PixelFormat::fFourCC );
@@ -494,7 +506,7 @@ static QVector<uint32_t> handleFourCC( const DDSHeader& header, QFile* file )
     }
 
     if ( file->bytesAvailable() < static_cast<qint64>( sizeof( DXGIHeader ) ) ) {
-        LOG( "File truncated, not enough data to read dxgi header" );
+        LOG( "File truncated or corrupted, not enough data to read dxgi header" );
         return {};
     }
 
@@ -529,7 +541,7 @@ static QVector<uint32_t> handleFourCC( const DDSHeader& header, QFile* file )
     }
 }
 
-static QVector<uint32_t> extractUncompressedPixels( const DDSHeader& header, QFile* file )
+static ImageData extractUncompressedPixels( const DDSHeader& header, QFile* file )
 {
     assert( file );
     if ( !( header.pixelFormat.flags & PixelFormat::fRGB ) ) {
@@ -548,7 +560,7 @@ static QVector<uint32_t> extractUncompressedPixels( const DDSHeader& header, QFi
     case 24: {
         const qint64 bytesToRead = header.width * header.height * sizeof( Byte3 );
         if ( file->bytesAvailable() < bytesToRead ) {
-            LOG( "File truncated, not enough data to read" );
+            LOG( "File truncated or corrupted, not enough data to read" );
             return {};
         }
         QVector<Byte3> tmp{};
@@ -556,11 +568,13 @@ static QVector<uint32_t> extractUncompressedPixels( const DDSHeader& header, QFi
         file->read( reinterpret_cast<char*>( tmp.data() ), bytesToRead );
         file->close();
 
-        QVector<uint32_t> pixels{};
-        pixels.resize( header.width * header.height );
+        ImageData ret{};
+        ret.width = header.width;
+        ret.height = header.height;
+        ret.pixels.resize( header.width * header.height );
         deswizzler.aFill = 255;
-        std::transform( tmp.begin(), tmp.end(), pixels.begin(), deswizzler );
-        return pixels;
+        std::transform( tmp.begin(), tmp.end(), ret.pixels.begin(), deswizzler );
+        return ret;
     }
     case 32: {
         if ( !( header.pixelFormat.flags & ( PixelFormat::fAlpha | PixelFormat::fAlphaPixels ) ) ) {
@@ -570,15 +584,17 @@ static QVector<uint32_t> extractUncompressedPixels( const DDSHeader& header, QFi
 
         const qint64 bytesToRead = header.width * header.height * sizeof( uint32_t );
         if ( file->bytesAvailable() < bytesToRead ) {
-            LOG( "File truncated, not enough data to read" );
+            LOG( "File truncated or corrupted, not enough data to read" );
             return {};
         }
 
-        QVector<uint32_t> pixels{};
-        pixels.resize( header.width * header.height );
-        file->read( reinterpret_cast<char*>( pixels.data() ), bytesToRead );
-        std::transform( pixels.begin(), pixels.end(), pixels.begin(), deswizzler );
-        return pixels;
+        ImageData ret{};
+        ret.width = header.width;
+        ret.height = header.height;
+        ret.pixels.resize( header.width * header.height );
+        file->read( reinterpret_cast<char*>( ret.pixels.data() ), bytesToRead );
+        std::transform( ret.pixels.begin(), ret.pixels.end(), ret.pixels.begin(), deswizzler );
+        return ret;
     }
     default:
         LOG( "Suspicious pixel format, maybe TODO" );
@@ -624,21 +640,28 @@ KIO::ThumbnailResult DDSThumbnailCreator::create(const KIO::ThumbnailRequest &re
     }
 
     const bool isFourCC = header.pixelFormat.flags == PixelFormat::fFourCC;
-    QVector<uint32_t> pixels = isFourCC
+    ImageData data = isFourCC
         ? handleFourCC( header, &file )
         : extractUncompressedPixels( header, &file );
 
-    if ( pixels.empty() ) {
+    if ( data.pixels.empty() ) {
         return KIO::ThumbnailResult::fail();
     }
 
-    QImage image{ reinterpret_cast<const uchar*>( pixels.data() )
-        , static_cast<int>( header.width )
-        , static_cast<int>( header.height )
+    assert( data.width );
+    assert( data.height );
+    QImage image{ reinterpret_cast<const uchar*>( data.pixels.data() )
+        , static_cast<int>( data.width )
+        , static_cast<int>( data.height )
         , QImage::Format_ARGB32
         , nullptr // non-owning qimage
         , nullptr
     };
+    if ( data.extentNeedsResize ) {
+        assert( data.oWidth );
+        assert( data.oHeight );
+        image = image.copy( 0, 0, data.oWidth, data.oHeight );
+    }
     return KIO::ThumbnailResult::pass(image.scaled(
         request.targetSize().width(),
         request.targetSize().height(),
