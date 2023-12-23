@@ -299,13 +299,10 @@ struct BC2 {
 };
 static_assert( sizeof( BC2 ) == 16, "sizeof BC2 not equal 16" );
 
-struct BC3 {
+struct BC4unorm {
     uint8_t alpha0;
     uint8_t alpha1;
     uint8_t aindexes[ 6 ];
-    uint16_t color0;
-    uint16_t color1;
-    uint32_t indexes;
 
     uint8_t alphaIndice( uint32_t i ) const
     {
@@ -335,6 +332,19 @@ struct BC3 {
         default: return 0;
         }
     }
+    uint32_t operator [] ( uint32_t i ) const
+    {
+        return colorfn::r8( alpha( i ) );
+    }
+
+};
+static_assert( sizeof( BC4unorm ) == 8, "sizeof BC4 not equal 8" );
+
+struct BC3 : public BC4unorm {
+    uint16_t color0;
+    uint16_t color1;
+    uint32_t indexes;
+
     uint32_t operator [] ( uint32_t i ) const
     {
         assert( i < 16 );
@@ -522,6 +532,7 @@ static ImageData handleFourCC( const DDSHeader& header, QFile* file )
         DXGI_FORMAT_BC1_UNORM = 71,
         DXGI_FORMAT_BC2_UNORM = 74,
         DXGI_FORMAT_BC3_UNORM = 77,
+        DXGI_FORMAT_BC4_UNORM = 80,
         DXGI_FORMAT_B5G6R5_UNORM = 85,
         DXGI_FORMAT_B5G5R5A1_UNORM = 86,
         DXGI_FORMAT_B8G8R8A8_UNORM = 87,
@@ -531,6 +542,7 @@ static ImageData handleFourCC( const DDSHeader& header, QFile* file )
     case DXGI_FORMAT_BC1_UNORM: return blockDecompress<BC1>( header, file );
     case DXGI_FORMAT_BC2_UNORM: return blockDecompress<BC2>( header, file );
     case DXGI_FORMAT_BC3_UNORM: return blockDecompress<BC3>( header, file );
+    case DXGI_FORMAT_BC4_UNORM: return blockDecompress<BC4unorm>( header, file );
     case DXGI_FORMAT_B5G5R5A1_UNORM: return readAndConvert<uint16_t, &colorfn::b5g5r5a1>( header, file );
     case DXGI_FORMAT_B5G6R5_UNORM: return readAndConvert<uint16_t, &colorfn::b5g6r5>( header, file );
     case DXGI_FORMAT_B8G8R8A8_UNORM: return readAndConvert<uint32_t, &colorfn::noconv>( header, file );

@@ -1,7 +1,7 @@
 # kdegraphics-thumbnailer-dds
 DDS texture thumbnailer for KDE
 
-At some point I got considerably annoyed that KDE does not support DDS files since forever, so here it is, thumbnailer for them, written basicly over a weekend.
+At some point I got considerably annoyed that KDE does not support DDS files since forever, so here it is.
 
 ### Supported formats:
 * uncompressed 24 bit & 32 bit
@@ -13,6 +13,7 @@ At some point I got considerably annoyed that KDE does not support DDS files sin
 * BC1_UNORM
 * BC2_UNORM
 * BC3_UNORM
+* BC4_UNORM
 * B5G6R5_UNORM
 * B5G5R5A1_UNORM
 * B8G8R8A8_UNORM
