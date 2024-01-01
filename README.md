@@ -8,6 +8,8 @@ At some point I got considerably annoyed that KDE does not support DDS files sin
 * BC1 (DXT1)
 * BC2 (DXT3)
 * BC3 (DXT5)
+* BC4U (ATI1)
+* BC5U (ATI2)
 
 ##### (DX10 DXGI extension)
 * BC1_UNORM

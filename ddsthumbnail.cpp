@@ -522,6 +522,12 @@ static ImageData handleFourCC( const DDSHeader& header, QFile* file )
     case '3TXD': return blockDecompress<BC2unorm>( header, file );
     case '5TXD': return blockDecompress<BC3unorm>( header, file );
     case '01XD': break;
+
+    // NOTE: unable to find documentation, but living specimens exists in the wild
+    case 'U4CB': [[fallthrough]];
+    case '1ITA': return blockDecompress<BC4unorm>( header, file );
+    case 'U5CB': [[fallthrough]];
+    case '2ITA': return blockDecompress<BC5unorm>( header, file );
     default:
         LOG( "Unknown fourCC value" );
         return {};
