@@ -235,7 +235,7 @@ struct Decompressor {
     }
 };
 
-struct BC1 {
+struct BC1unorm {
     uint16_t color0;
     uint16_t color1;
     uint32_t indexes;
@@ -262,9 +262,9 @@ struct BC1 {
         }
     }
 };
-static_assert( sizeof( BC1 ) == 8, "sizeof BC1 not equal 8" );
+static_assert( sizeof( BC1unorm ) == 8, "sizeof BC1unorm not equal 8" );
 
-struct BC2 {
+struct BC2unorm {
     uint16_t alphas[ 4 ];
     uint16_t color0;
     uint16_t color1;
@@ -297,7 +297,7 @@ struct BC2 {
         }
     }
 };
-static_assert( sizeof( BC2 ) == 16, "sizeof BC2 not equal 16" );
+static_assert( sizeof( BC2unorm ) == 16, "sizeof BC2unorm not equal 16" );
 
 struct BC4unorm {
     uint8_t alpha0;
@@ -338,9 +338,9 @@ struct BC4unorm {
     }
 
 };
-static_assert( sizeof( BC4unorm ) == 8, "sizeof BC4 not equal 8" );
+static_assert( sizeof( BC4unorm ) == 8, "sizeof BC4unorm not equal 8" );
 
-struct BC3 : public BC4unorm {
+struct BC3unorm : public BC4unorm {
     uint16_t color0;
     uint16_t color1;
     uint32_t indexes;
@@ -364,7 +364,7 @@ struct BC3 : public BC4unorm {
         }
     }
 };
-static_assert( sizeof( BC3 ) == 16, "sizeof BC3 not equal 16" );
+static_assert( sizeof( BC3unorm ) == 16, "sizeof BC3unorm not equal 16" );
 
 template<typename T>
 static QVector<T> readBlocks( QFile* file, qint64 pixelCount )
@@ -506,9 +506,9 @@ static ImageData handleFourCC( const DDSHeader& header, QFile* file )
     assert( header.pixelFormat.flags == PixelFormat::fFourCC );
 
     switch ( header.pixelFormat.fourCC ) {
-    case '1TXD': return blockDecompress<BC1>( header, file );
-    case '3TXD': return blockDecompress<BC2>( header, file );
-    case '5TXD': return blockDecompress<BC3>( header, file );
+    case '1TXD': return blockDecompress<BC1unorm>( header, file );
+    case '3TXD': return blockDecompress<BC2unorm>( header, file );
+    case '5TXD': return blockDecompress<BC3unorm>( header, file );
     case '01XD': break;
     default:
         LOG( "Unknown fourCC value" );
@@ -539,9 +539,9 @@ static ImageData handleFourCC( const DDSHeader& header, QFile* file )
     };
 
     switch ( dxgiHeader.format ) {
-    case DXGI_FORMAT_BC1_UNORM: return blockDecompress<BC1>( header, file );
-    case DXGI_FORMAT_BC2_UNORM: return blockDecompress<BC2>( header, file );
-    case DXGI_FORMAT_BC3_UNORM: return blockDecompress<BC3>( header, file );
+    case DXGI_FORMAT_BC1_UNORM: return blockDecompress<BC1unorm>( header, file );
+    case DXGI_FORMAT_BC2_UNORM: return blockDecompress<BC2unorm>( header, file );
+    case DXGI_FORMAT_BC3_UNORM: return blockDecompress<BC3unorm>( header, file );
     case DXGI_FORMAT_BC4_UNORM: return blockDecompress<BC4unorm>( header, file );
     case DXGI_FORMAT_B5G5R5A1_UNORM: return readAndConvert<uint16_t, &colorfn::b5g5r5a1>( header, file );
     case DXGI_FORMAT_B5G6R5_UNORM: return readAndConvert<uint16_t, &colorfn::b5g6r5>( header, file );
