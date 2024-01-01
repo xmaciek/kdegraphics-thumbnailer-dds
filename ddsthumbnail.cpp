@@ -366,6 +366,18 @@ struct BC3unorm : public BC4unorm {
 };
 static_assert( sizeof( BC3unorm ) == 16, "sizeof BC3unorm not equal 16" );
 
+struct BC5unorm {
+    BC4unorm red;
+    BC4unorm green;
+
+    uint32_t operator [] ( uint32_t i ) const
+    {
+        assert( i < 16 );
+        return colorfn::makeARGB8888( red.alpha( i ), green.alpha( i ), 0u, 0xFFu );
+    }
+};
+static_assert( sizeof( BC5unorm ) == 16, "sizeof BC5unorm not equal 16" );
+
 template<typename T>
 static QVector<T> readBlocks( QFile* file, qint64 pixelCount )
 {
@@ -533,6 +545,7 @@ static ImageData handleFourCC( const DDSHeader& header, QFile* file )
         DXGI_FORMAT_BC2_UNORM = 74,
         DXGI_FORMAT_BC3_UNORM = 77,
         DXGI_FORMAT_BC4_UNORM = 80,
+        DXGI_FORMAT_BC5_UNORM = 83,
         DXGI_FORMAT_B5G6R5_UNORM = 85,
         DXGI_FORMAT_B5G5R5A1_UNORM = 86,
         DXGI_FORMAT_B8G8R8A8_UNORM = 87,
@@ -543,6 +556,7 @@ static ImageData handleFourCC( const DDSHeader& header, QFile* file )
     case DXGI_FORMAT_BC2_UNORM: return blockDecompress<BC2unorm>( header, file );
     case DXGI_FORMAT_BC3_UNORM: return blockDecompress<BC3unorm>( header, file );
     case DXGI_FORMAT_BC4_UNORM: return blockDecompress<BC4unorm>( header, file );
+    case DXGI_FORMAT_BC5_UNORM: return blockDecompress<BC5unorm>( header, file );
     case DXGI_FORMAT_B5G5R5A1_UNORM: return readAndConvert<uint16_t, &colorfn::b5g5r5a1>( header, file );
     case DXGI_FORMAT_B5G6R5_UNORM: return readAndConvert<uint16_t, &colorfn::b5g6r5>( header, file );
     case DXGI_FORMAT_B8G8R8A8_UNORM: return readAndConvert<uint32_t, &colorfn::noconv>( header, file );

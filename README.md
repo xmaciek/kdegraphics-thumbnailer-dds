@@ -14,6 +14,7 @@ At some point I got considerably annoyed that KDE does not support DDS files sin
 * BC2_UNORM
 * BC3_UNORM
 * BC4_UNORM
+* BC5_UNORM
 * B5G6R5_UNORM
 * B5G5R5A1_UNORM
 * B8G8R8A8_UNORM
