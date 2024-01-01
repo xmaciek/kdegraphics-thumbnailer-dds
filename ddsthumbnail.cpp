@@ -635,7 +635,7 @@ static ImageData extractUncompressedPixels( const DDSHeader& header, QFile* file
     }
 }
 
-KIO::ThumbnailResult DDSThumbnailCreator::create(const KIO::ThumbnailRequest &request)
+KIO::ThumbnailResult DDSThumbnailCreator::create( const KIO::ThumbnailRequest& request )
 {
     QFile file{ request.url().toLocalFile() };
 
@@ -661,13 +661,18 @@ KIO::ThumbnailResult DDSThumbnailCreator::create(const KIO::ThumbnailRequest &re
         return KIO::ThumbnailResult::fail();
     }
 
-    static constexpr auto mustHaveFlags = DDSHeader::fCaps | DDSHeader::fHeight | DDSHeader::fWidth | DDSHeader::fPixelFormat;
-    if ( ( header.flags & mustHaveFlags ) != mustHaveFlags ) {
+    if ( ~header.flags & ( DDSHeader::fCaps | DDSHeader::fHeight | DDSHeader::fWidth | DDSHeader::fPixelFormat ) ) {
         LOG( "Missing .flags ( caps | width | height | pixelformat )" );
         return KIO::ThumbnailResult::fail();
     }
-    if ( ( header.caps & DDSHeader::Caps::fTexture ) != DDSHeader::Caps::fTexture ) {
+
+    if ( ~header.caps & DDSHeader::Caps::fTexture ) {
         LOG( "Missing .caps flag ( texture )" );
+        return KIO::ThumbnailResult::fail();
+    }
+
+    if ( header.flags & DDSHeader::fPitch ) {
+        LOG( "Header .flags with pitch, maybe TODO" );
         return KIO::ThumbnailResult::fail();
     }
 
