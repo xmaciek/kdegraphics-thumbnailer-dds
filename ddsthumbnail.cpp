@@ -376,17 +376,46 @@ template <typename T>
 static QVector<T> readPixels( const DDSHeader& header, QFile* file )
 {
     assert( file );
+
     const qint64 pixelCount = (qint64)header.width * (qint64)header.height;
-    const qint64 bytesToRead = pixelCount * (qint64)sizeof( T );
+    qint64 bytesToRead = pixelCount * (qint64)sizeof( T );
+    qint64 bytesToSkip = 0;
+    qint64 pixelsToAdvance = pixelCount;
+    qint64 loopCount = 1;
+
+    if ( header.flags & DDSHeader::fPitch ) {
+        const qint64 bytesPerLine = (qint64)header.width * (qint64)sizeof( T );
+        if ( header.pitchOrLinearSize < bytesPerLine ) {
+            LOG( "Suspicious pitch value, maybe TODO" );
+            return {};
+        }
+        if ( header.pitchOrLinearSize > bytesPerLine ) {
+            if ( file->bytesAvailable() < ( header.pitchOrLinearSize * header.height ) ) {
+                LOG( "File truncated or corrupted, not enough data to read" );
+                return {};
+            }
+            bytesToRead = header.pitchOrLinearSize;
+            bytesToSkip = header.pitchOrLinearSize - bytesPerLine;
+            loopCount = header.height;
+            pixelsToAdvance = header.width;
+        }
+    }
     if ( file->bytesAvailable() < bytesToRead ) {
         LOG( "File truncated or corrupted, not enough data to read" );
         return {};
     }
 
-    // TODO: pitch flag handling
     QVector<T> pixels{};
     pixels.resize( pixelCount );
-    file->read( reinterpret_cast<char*>( pixels.data() ), bytesToRead );
+    auto it = pixels.begin();
+    assert( loopCount > 0 );
+    for ( qint64 i = loopCount; i; --i ) {
+        file->read( reinterpret_cast<char*>( it ), bytesToRead );
+        file->skip( bytesToSkip );
+        std::advance( it, pixelsToAdvance );
+    }
+    assert( it == pixels.end() );
+
     file->close();
     return pixels;
 }
@@ -477,6 +506,11 @@ template <typename TBlockType>
 static ImageData blockDecompress( const DDSHeader& header, QFile* file )
 {
     assert( file );
+
+    if ( header.flags & DDSHeader::fPitch ) {
+        LOG( "Suspicious BC format file with pitch flag, maybe TODO" );
+        return {};
+    }
 
     auto align4 = []( uint32_t v ) { return ( v + 3u ) & ~3u; };
     const uint32_t width = align4( header.width );
@@ -673,11 +707,6 @@ KIO::ThumbnailResult DDSThumbnailCreator::create( const KIO::ThumbnailRequest& r
 
     if ( ~header.caps & DDSHeader::Caps::fTexture ) {
         LOG( "Missing .caps flag ( texture )" );
-        return KIO::ThumbnailResult::fail();
-    }
-
-    if ( header.flags & DDSHeader::fPitch ) {
-        LOG( "Header .flags with pitch, maybe TODO" );
         return KIO::ThumbnailResult::fail();
     }
 
