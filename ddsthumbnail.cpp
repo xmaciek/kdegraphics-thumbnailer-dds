@@ -69,13 +69,6 @@ static uint32_t makeARGB8888( uint32_t r, uint32_t g, uint32_t b, uint32_t a )
 }
 
 
-// NOTE: Happy endianness
-//       DXGI_FORMAT_B8G8R8A8_UNORM == QImage::Format_ARGB32
-static uint32_t noconv( uint32_t c )
-{
-    return c;
-}
-
 static uint32_t b5g5r5a1( uint16_t c )
 {
     uint32_t a = ( c >> 15 ) ? 0xFF : 0;
@@ -378,6 +371,26 @@ struct BC5unorm {
 };
 static_assert( sizeof( BC5unorm ) == 16, "sizeof BC5unorm not equal 16" );
 
+
+template <typename T>
+static QVector<T> readPixels( const DDSHeader& header, QFile* file )
+{
+    assert( file );
+    const qint64 pixelCount = (qint64)header.width * (qint64)header.height;
+    const qint64 bytesToRead = pixelCount * (qint64)sizeof( T );
+    if ( file->bytesAvailable() < bytesToRead ) {
+        LOG( "File truncated or corrupted, not enough data to read" );
+        return {};
+    }
+
+    // TODO: pitch flag handling
+    QVector<T> pixels{};
+    pixels.resize( pixelCount );
+    file->read( reinterpret_cast<char*>( pixels.data() ), bytesToRead );
+    file->close();
+    return pixels;
+}
+
 template<typename T>
 static QVector<T> readBlocks( QFile* file, qint64 pixelCount )
 {
@@ -390,11 +403,12 @@ static QVector<T> readBlocks( QFile* file, qint64 pixelCount )
     }
 
     QVector<T> blocks{};
-    blocks.resize( bytesToRead / sizeof( T ) );
+    blocks.resize( blocksToRead );
     file->read( reinterpret_cast<char*>( blocks.data() ), bytesToRead );
     file->close();
     return blocks;
 }
+
 
 struct Byte3 {
     uint8_t channel[ 3 ];
@@ -467,14 +481,14 @@ static ImageData blockDecompress( const DDSHeader& header, QFile* file )
     auto align4 = []( uint32_t v ) { return ( v + 3u ) & ~3u; };
     const uint32_t width = align4( header.width );
     const uint32_t height = align4( header.height );
-
-    QVector<TBlockType> blocks = readBlocks<TBlockType>( file, width * height );
+    const qint64 pixelCount = width * height;
+    QVector<TBlockType> blocks = readBlocks<TBlockType>( file, pixelCount );
     if ( blocks.empty() ) {
         return {};
     }
 
     ImageData ret{};
-    ret.pixels.resize( width * height );
+    ret.pixels.resize( pixelCount );
     ret.width = width;
     ret.height = height;
     ret.oWidth = header.width;
@@ -490,25 +504,34 @@ static ImageData readAndConvert( const DDSHeader& header, QFile* file )
 {
     assert( file );
 
-    const uint32_t pixelCount = header.width * header.height;
-    const qint64 bytesToRead = pixelCount * sizeof( TSrc );
-    if ( file->bytesAvailable() < bytesToRead ) {
-        LOG( "File truncated or corrupted, not enough data to read" );
+    QVector<TSrc> srcPixels = readPixels<TSrc>( header, file );
+    if ( srcPixels.empty() ) {
         return {};
     }
 
-    QVector<TSrc> srcPixels{};
-    srcPixels.resize( pixelCount );
-    file->read( reinterpret_cast<char*>( srcPixels.data() ), bytesToRead );
-    file->close();
-
     ImageData ret{};
-    ret.pixels.resize( pixelCount );
     ret.width = header.width;
     ret.height = header.height;
-    const TSrc* begin = reinterpret_cast<const TSrc*>( srcPixels.data() );
-    const TSrc* end = begin + pixelCount;
-    std::transform( begin, end, ret.pixels.data(), fn );
+    ret.pixels.resize( srcPixels.size() );
+    std::transform( srcPixels.begin(), srcPixels.end(), ret.pixels.data(), fn );
+    return ret;
+}
+
+// NOTE: Happy endianness
+//       DXGI_FORMAT_B8G8R8A8_UNORM == QImage::Format_ARGB32
+static ImageData read_b8g8r8a8( const DDSHeader& header, QFile* file )
+{
+    assert( file );
+
+    QVector<uint32_t> pixels = readPixels<uint32_t>( header, file );
+    if ( pixels.empty() ) {
+        return {};
+    }
+
+    ImageData ret{};
+    ret.width = header.width;
+    ret.height = header.height;
+    ret.pixels = std::move( pixels );
     return ret;
 }
 
@@ -565,7 +588,7 @@ static ImageData handleFourCC( const DDSHeader& header, QFile* file )
     case DXGI_FORMAT_BC5_UNORM: return blockDecompress<BC5unorm>( header, file );
     case DXGI_FORMAT_B5G5R5A1_UNORM: return readAndConvert<uint16_t, &colorfn::b5g5r5a1>( header, file );
     case DXGI_FORMAT_B5G6R5_UNORM: return readAndConvert<uint16_t, &colorfn::b5g6r5>( header, file );
-    case DXGI_FORMAT_B8G8R8A8_UNORM: return readAndConvert<uint32_t, &colorfn::noconv>( header, file );
+    case DXGI_FORMAT_B8G8R8A8_UNORM: return read_b8g8r8a8( header, file );
     case DXGI_FORMAT_R8_UNORM: return readAndConvert<uint8_t, &colorfn::r8>( header, file );
     default:
         LOG( "Unsupported dxgi format, maybe TODO" );
@@ -588,22 +611,14 @@ static ImageData extractUncompressedPixels( const DDSHeader& header, QFile* file
     );
 
 
+    ImageData ret{};
+    ret.width = header.width;
+    ret.height = header.height;
+
     switch ( header.pixelFormat.rgbBitCount ) {
     case 24: {
-        const qint64 bytesToRead = header.width * header.height * sizeof( Byte3 );
-        if ( file->bytesAvailable() < bytesToRead ) {
-            LOG( "File truncated or corrupted, not enough data to read" );
-            return {};
-        }
-        QVector<Byte3> tmp{};
-        tmp.resize( header.width * header.height );
-        file->read( reinterpret_cast<char*>( tmp.data() ), bytesToRead );
-        file->close();
-
-        ImageData ret{};
-        ret.width = header.width;
-        ret.height = header.height;
-        ret.pixels.resize( header.width * header.height );
+        QVector<Byte3> tmp = readPixels<Byte3>( header, file );
+        ret.pixels.resize( tmp.size() );
         deswizzler.aFill = 255;
         std::transform( tmp.begin(), tmp.end(), ret.pixels.begin(), deswizzler );
         return ret;
@@ -614,17 +629,7 @@ static ImageData extractUncompressedPixels( const DDSHeader& header, QFile* file
             return {};
         }
 
-        const qint64 bytesToRead = header.width * header.height * sizeof( uint32_t );
-        if ( file->bytesAvailable() < bytesToRead ) {
-            LOG( "File truncated or corrupted, not enough data to read" );
-            return {};
-        }
-
-        ImageData ret{};
-        ret.width = header.width;
-        ret.height = header.height;
-        ret.pixels.resize( header.width * header.height );
-        file->read( reinterpret_cast<char*>( ret.pixels.data() ), bytesToRead );
+        ret.pixels = readPixels<uint32_t>( header, file );
         std::transform( ret.pixels.begin(), ret.pixels.end(), ret.pixels.begin(), deswizzler );
         return ret;
     }
