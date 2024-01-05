@@ -394,7 +394,7 @@ static QVector<T> readPixels( const DDSHeader& header, QFile* file )
                 LOG( "File truncated or corrupted, not enough data to read" );
                 return {};
             }
-            bytesToRead = header.pitchOrLinearSize;
+            bytesToRead = bytesPerLine;
             bytesToSkip = header.pitchOrLinearSize - bytesPerLine;
             loopCount = header.height;
             pixelsToAdvance = header.width;
