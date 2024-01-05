@@ -681,6 +681,12 @@ KIO::ThumbnailResult DDSThumbnailCreator::create( const KIO::ThumbnailRequest& r
         return KIO::ThumbnailResult::fail();
     }
 
+    static constexpr uint64_t MAX_PIXEL_COUNT = 256u << 18; // 256MiB / sizeof( ARGB32 )
+    if ( (uint64_t)header.width * (uint64_t)header.height > MAX_PIXEL_COUNT ) {
+        LOG( "Intermediate thumbnail size exceeds arbitrary sane limit of 256MiB, file possibly corrupted" );
+        return KIO::ThumbnailResult::fail();
+    }
+
     const bool isFourCC = header.pixelFormat.flags == PixelFormat::fFourCC;
     ImageData data = isFourCC
         ? handleFourCC( header, &file )
