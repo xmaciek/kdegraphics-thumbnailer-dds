@@ -4,7 +4,7 @@ DDS texture thumbnailer for KDE
 At some point I got considerably annoyed that KDE does not support DDS files since forever, so here it is.
 
 ### Supported formats:
-* uncompressed 24 bit & 32 bit
+* uncompressed 8, 16, 24, 32 bit
 * BC1 (DXT1)
 * BC2 (DXT3)
 * BC3 (DXT5)

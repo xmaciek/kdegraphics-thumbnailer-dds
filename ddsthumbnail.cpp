@@ -33,13 +33,14 @@
 #include <QFile>
 #include <QImage>
 
+#include <array>
 #include <algorithm>
 #include <cassert>
 #include <cstdint>
 
 #ifndef NDEBUG
 #include <iostream>
-#define LOG( msg ) std::cerr << ( msg );
+#define LOG( msg ) std::cerr << ( msg ) << "\n";
 #else
 #define LOG( msg ) {}
 #endif
@@ -60,6 +61,19 @@ public:
 
 K_PLUGIN_CLASS_WITH_JSON(DDSThumbnailCreator, "ddsthumbnail.json")
 
+namespace {
+
+struct Byte3 {
+    uint8_t channel[ 3 ];
+    operator uint32_t () const
+    {
+        uint32_t ret = 0;
+        ret |= channel[ 2 ]; ret <<= 8;
+        ret |= channel[ 1 ]; ret <<= 8;
+        ret |= channel[ 0 ];
+        return ret;
+    }
+};
 
 namespace colorfn {
 
@@ -68,6 +82,10 @@ static uint32_t makeARGB8888( uint32_t r, uint32_t g, uint32_t b, uint32_t a )
     return ( a << 24 ) | ( r << 16 ) | ( g << 8 ) | b;
 }
 
+static uint32_t b8g8r8( Byte3 c )
+{
+    return makeARGB8888( c.channel[ 2 ], c.channel[ 1 ], c.channel[ 0 ], 0xFF );
+}
 
 static uint32_t b5g5r5a1( uint16_t c )
 {
@@ -325,6 +343,7 @@ struct BC4unorm {
         default: return 0;
         }
     }
+
     uint32_t operator [] ( uint32_t i ) const
     {
         return colorfn::r8( alpha( i ) );
@@ -370,7 +389,6 @@ struct BC5unorm {
     }
 };
 static_assert( sizeof( BC5unorm ) == 16, "sizeof BC5unorm not equal 16" );
-
 
 template <typename T>
 static QVector<T> readPixels( const DDSHeader& header, QFile* file )
@@ -438,20 +456,12 @@ static QVector<T> readBlocks( QFile* file, qint64 pixelCount )
     return blocks;
 }
 
-
-struct Byte3 {
-    uint8_t channel[ 3 ];
-    operator uint32_t () const
-    {
-        uint32_t ret = 0;
-        ret |= channel[ 2 ]; ret <<= 8;
-        ret |= channel[ 1 ]; ret <<= 8;
-        ret |= channel[ 0 ];
-        return ret;
-    }
-};
-
 struct Deswizzler {
+    using Rescale = uint8_t( uint32_t );
+    Rescale* rRescale = nullptr;
+    Rescale* gRescale = nullptr;
+    Rescale* bRescale = nullptr;
+    Rescale* aRescale = nullptr;
     uint32_t rMask = 0;
     uint32_t gMask = 0;
     uint32_t bMask = 0;
@@ -460,36 +470,68 @@ struct Deswizzler {
     uint8_t gShift = 0;
     uint8_t bShift = 0;
     uint8_t aShift = 0;
-    uint8_t aFill = 0;
 
+    Deswizzler() = default;
     Deswizzler( uint32_t rm, uint32_t gm, uint32_t bm, uint32_t am )
     : rMask( rm )
     , gMask( gm )
     , bMask( bm )
     , aMask( am )
     {
-        assert( __builtin_popcount( rm ) == 8 || __builtin_popcount( rm ) == 0 );
-        assert( __builtin_popcount( gm ) == 8 || __builtin_popcount( gm ) == 0 );
-        assert( __builtin_popcount( bm ) == 8 || __builtin_popcount( bm ) == 0 );
-        assert( __builtin_popcount( am ) == 8 || __builtin_popcount( am ) == 0 );
+        auto gibRescale = []( uint32_t mask ) -> Rescale*
+        {
+            switch ( __builtin_popcount( mask ) ) {
+            case 0: return []( uint32_t ) -> uint8_t { return 0; };
+            case 1: return []( uint32_t c ) -> uint8_t { return c ? 255 : 0; };
+            case 4: return []( uint32_t c ) -> uint8_t { return static_cast<uint8_t>( ( c << 4 ) | c ); };
+            case 5: return []( uint32_t c ) -> uint8_t { return static_cast<uint8_t>( ( c << 3 ) | ( c >> 2 ) ); };
+            case 6: return []( uint32_t c ) -> uint8_t { return static_cast<uint8_t>( ( c << 2 ) | ( c >> 4 ) ); };
+            case 8: return []( uint32_t c ) -> uint8_t { return static_cast<uint8_t>( c ); };
+            case 16: return []( uint32_t c ) -> uint8_t { return static_cast<uint8_t>( c >> 8 ); };
+            case 24: return []( uint32_t c ) -> uint8_t { return static_cast<uint8_t>( c >> 16 ); };
+            case 32: return []( uint32_t c ) -> uint8_t { return static_cast<uint8_t>( c >> 24 ); };
+            default: return nullptr;
+            }
+        };
+        rRescale = gibRescale( rm );
+        gRescale = gibRescale( gm );
+        bRescale = gibRescale( bm );
+        // NOTE: if alpha mask is 0, make it opaque instead
+        aRescale = am ? gibRescale( am ) : []( uint32_t ) -> uint8_t { return 255; };
         rShift = rm ? __builtin_ctz( rm ) : 0;
         gShift = gm ? __builtin_ctz( gm ) : 0;
         bShift = bm ? __builtin_ctz( bm ) : 0;
         aShift = am ? __builtin_ctz( am ) : 0;
     }
 
+    bool isValid() const
+    {
+        return rRescale && gRescale && bRescale && aRescale;
+    }
+
     uint32_t operator () ( uint32_t v ) const
     {
-        uint32_t r = ( v & rMask ) >> rShift;
-        uint32_t g = ( v & gMask ) >> gShift;
-        uint32_t b = ( v & bMask ) >> bShift;
-        uint32_t a = ( v & aMask ) >> aShift;
-        return colorfn::makeARGB8888( r, g, b, aFill | a );
+        assert( isValid() );
+        uint8_t r = rRescale( ( v & rMask ) >> rShift );
+        uint8_t g = gRescale( ( v & gMask ) >> gShift );
+        uint8_t b = bRescale( ( v & bMask ) >> bShift );
+        uint8_t a = aRescale( ( v & aMask ) >> aShift );
+        return colorfn::makeARGB8888( r, g, b, a );
     }
 
     uint32_t operator () ( Byte3 v ) const
     {
         return operator ()( static_cast<uint32_t>( v ) );
+    }
+
+    uint32_t operator () ( uint16_t c ) const
+    {
+        return operator ()( static_cast<uint32_t>( c ) );
+    }
+
+    uint32_t operator () ( uint8_t c ) const
+    {
+        return operator ()( static_cast<uint32_t>( c ) );
     }
 };
 
@@ -633,36 +675,91 @@ static ImageData handleFourCC( const DDSHeader& header, QFile* file )
 static ImageData extractUncompressedPixels( const DDSHeader& header, QFile* file )
 {
     assert( file );
-    if ( !( header.pixelFormat.flags & PixelFormat::fRGB ) ) {
-        LOG( "Non-color images not supported, maybe TODO" );
+    if ( header.pixelFormat.flags & PixelFormat::fYUV ) {
+        LOG( "YUV images not supported, maybe TODO" );
         return {};
     }
 
-    Deswizzler deswizzler( header.pixelFormat.bitmaskR
-        , header.pixelFormat.bitmaskG
-        , header.pixelFormat.bitmaskB
-        , header.pixelFormat.bitmaskA
-    );
+    struct Fmt {
+        uint32_t bitCount;
+        std::array<uint32_t, 4> bitMasks;
+        ImageData (*readAndConvert)( const DDSHeader&, QFile* );
+    };
 
+    static constexpr Fmt LUT[] = {
+        Fmt{ 32, { 0x00FF0000u, 0x0000FF00u, 0x00000000FFu, 0xFF000000u }, &read_b8g8r8a8 },
+        Fmt{ 24, { 0x00FF0000u, 0x0000FF00u, 0x00000000FFu, 0x00000000u }, &readAndConvert<Byte3, &colorfn::b8g8r8> },
+        Fmt{ 16, { 0b1111100000000000u, 0b0000011111100000u, 0b0000000000011111u, 0u, }, &readAndConvert<uint16_t, &colorfn::b5g6r5> },
+        Fmt{ 16, { 0b0111110000000000u, 0b0000001111100000u, 0b0000000000011111u, 0b1000000000000000u, }, &readAndConvert<uint16_t, &colorfn::b5g5r5a1> },
+        Fmt{ 8, { 0xFFu, 0u, 0u, 0u }, &readAndConvert<uint8_t, &colorfn::r8> },
+        Fmt{ 8, { 0u, 0u, 0u, 0xFFu }, &readAndConvert<uint8_t, &colorfn::r8> },
+    };
+    for ( auto&& fmt : LUT ) {
+        assert( fmt.readAndConvert );
+        if ( fmt.bitCount != header.pixelFormat.rgbBitCount ) continue;
+        // TODO: expected 0 in mask if unused, clear per flags bits if found problematic
+        std::array<uint32_t, 4> mask{
+            header.pixelFormat.bitmaskR,
+            header.pixelFormat.bitmaskG,
+            header.pixelFormat.bitmaskB,
+            header.pixelFormat.bitmaskA,
+        };
+        if ( fmt.bitMasks != mask ) continue;
+        return fmt.readAndConvert( header, file );
+    }
+
+    // NOTE: if "common" format lookup not found, use slower deswizzler, no guarantees its 100% accurate for every possible permutation
+    Deswizzler deswizzler{};
+    const bool hasAlphaPixels = !!( header.pixelFormat.flags & PixelFormat::fAlphaPixels );
+
+    if ( header.pixelFormat.flags & PixelFormat::fRGB ) {
+        deswizzler = Deswizzler{
+            header.pixelFormat.bitmaskR,
+            header.pixelFormat.bitmaskG,
+            header.pixelFormat.bitmaskB,
+            hasAlphaPixels ? header.pixelFormat.bitmaskA : 0u
+        };
+    }
+    else if ( header.pixelFormat.flags & PixelFormat::fLuminance ) {
+        deswizzler = Deswizzler{ header.pixelFormat.bitmaskR, 0u, 0u, hasAlphaPixels ? header.pixelFormat.bitmaskA : 0u };
+    }
+    else if ( header.pixelFormat.flags & PixelFormat::fAlpha || hasAlphaPixels ) {
+        deswizzler = Deswizzler{ 0u, 0u, 0u, header.pixelFormat.bitmaskA };
+    }
+    else {
+        LOG( "Suspicious pixel format, maybe TODO" );
+        return {};
+    }
+
+    if ( !deswizzler.isValid() ) {
+        LOG( "Very sus pixel format, possibly corrupted" );
+        return {};
+    }
 
     ImageData ret{};
     ret.width = header.width;
     ret.height = header.height;
 
     switch ( header.pixelFormat.rgbBitCount ) {
+    case 8: {
+        QVector<uint8_t> tmp = readPixels<uint8_t>( header, file );
+        ret.pixels.resize( tmp.size() );
+        std::transform( tmp.begin(), tmp.end(), ret.pixels.begin(), deswizzler );
+        return ret;
+    }
+    case 16: {
+        QVector<uint16_t> tmp = readPixels<uint16_t>( header, file );
+        ret.pixels.resize( tmp.size() );
+        std::transform( tmp.begin(), tmp.end(), ret.pixels.begin(), deswizzler );
+        return ret;
+    }
     case 24: {
         QVector<Byte3> tmp = readPixels<Byte3>( header, file );
         ret.pixels.resize( tmp.size() );
-        deswizzler.aFill = 255;
         std::transform( tmp.begin(), tmp.end(), ret.pixels.begin(), deswizzler );
         return ret;
     }
     case 32: {
-        if ( !( header.pixelFormat.flags & ( PixelFormat::fAlpha | PixelFormat::fAlphaPixels ) ) ) {
-            LOG( "Suspicious pixel format, maybe TODO" );
-            return {};
-        }
-
         ret.pixels = readPixels<uint32_t>( header, file );
         std::transform( ret.pixels.begin(), ret.pixels.end(), ret.pixels.begin(), deswizzler );
         return ret;
@@ -670,9 +767,10 @@ static ImageData extractUncompressedPixels( const DDSHeader& header, QFile* file
     default:
         LOG( "Suspicious pixel format, maybe TODO" );
         return {};
-
     }
 }
+
+} // namespace
 
 KIO::ThumbnailResult DDSThumbnailCreator::create( const KIO::ThumbnailRequest& request )
 {
