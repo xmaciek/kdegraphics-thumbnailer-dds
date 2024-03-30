@@ -25,6 +25,10 @@ target_sources( ddsthumbnail PRIVATE
     ddsthumbnail.cpp
 )
 
+target_compile_options( ddsthumbnail PRIVATE
+    -Wno-multichar
+)
+
 target_link_libraries( ddsthumbnail
     KF${QT_MAJOR_VERSION}::KIOGui
     Qt::Gui
