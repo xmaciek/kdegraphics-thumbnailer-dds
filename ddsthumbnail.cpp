@@ -22,20 +22,23 @@
 
 
 // Format references
+// https://docs.microsoft.com/en-us/windows/uwp/graphics-concepts/opaque-and-1-bit-alpha-textures
+// https://docs.microsoft.com/en-us/windows/win32/direct3d10/d3d10-graphics-programming-guide-resources-block-compression
 // https://docs.microsoft.com/en-us/windows/win32/direct3ddds/dds-header
 // https://docs.microsoft.com/en-us/windows/win32/direct3ddds/dds-pixelformat
-// https://docs.microsoft.com/en-us/windows/win32/direct3d10/d3d10-graphics-programming-guide-resources-block-compression
-// https://docs.microsoft.com/en-us/windows/uwp/graphics-concepts/opaque-and-1-bit-alpha-textures
+// https://github.com/Microsoft/DirectXTK/wiki/DDSTextureLoader
 // https://learn.microsoft.com/en-us/windows/win32/api/dxgiformat/ne-dxgiformat-dxgi_format
+// https://learn.microsoft.com/en-us/windows/win32/direct3d9/d3dformat
 
 #include <KPluginFactory>
 #include <KIO/ThumbnailCreator>
 #include <QFile>
 #include <QImage>
 
-#include <array>
 #include <algorithm>
+#include <array>
 #include <cassert>
+#include <cmath>
 #include <cstdint>
 
 #ifndef NDEBUG
@@ -115,6 +118,24 @@ static uint32_t b5g6r5( uint16_t c )
 static uint32_t r8( uint8_t c )
 {
     return makeARGB8888( c, c, c, 0xFF );
+}
+
+static uint32_t fastApproxFromSRGB( uint32_t c )
+{
+    static const auto SRGB_LUT = []()
+    {
+        std::array<uint8_t, 256> ret;
+        std::iota( ret.begin(), ret.end(), 0 );
+        std::transform( ret.begin(), ret.end(), ret.begin(),
+            []( uint8_t c ) { return (uint8_t)( 255.0f * std::sqrt( (float)c / 255.0f ) ); }
+        );
+        return ret;
+    }();
+    uint32_t a = c >> 24;
+    uint32_t r = ( c >> 16 ) & 0xFF;
+    uint32_t g = ( c >> 8 ) & 0xFF;
+    uint32_t b = c & 0xFF;
+    return makeARGB8888( SRGB_LUT[ r ], SRGB_LUT[ g ], SRGB_LUT[ b ], a );
 }
 
 }
@@ -390,6 +411,16 @@ struct BC5unorm {
 };
 static_assert( sizeof( BC5unorm ) == 16, "sizeof BC5unorm not equal 16" );
 
+template <typename TBlock>
+struct BCsrgb : public TBlock {
+    uint32_t operator [] ( uint32_t i ) const
+    {
+        static_assert( sizeof( BCsrgb<TBlock> ) == sizeof( TBlock ), "sizeof BCsrgb<TBlock> not equal to TBlock" );
+        uint32_t color = TBlock::operator[]( i );
+        return colorfn::fastApproxFromSRGB( color );
+    }
+};
+
 template <typename T>
 static QVector<T> readPixels( const DDSHeader& header, QFile* file )
 {
@@ -617,16 +648,18 @@ static ImageData handleFourCC( const DDSHeader& header, QFile* file )
     assert( header.pixelFormat.flags == PixelFormat::fFourCC );
 
     switch ( header.pixelFormat.fourCC ) {
-    case '1TXD': return blockDecompress<BC1unorm>( header, file );
-    case '3TXD': return blockDecompress<BC2unorm>( header, file );
-    case '5TXD': return blockDecompress<BC3unorm>( header, file );
     case '01XD': break;
-
-    // NOTE: unable to find documentation, but living specimens exists in the wild
+    case '1TXD': [[fallthrough]];
+    case '2TXD': return blockDecompress<BC1unorm>( header, file );
+    case '3TXD': [[fallthrough]];
+    case '4TXD': return blockDecompress<BC2unorm>( header, file );
+    case '5TXD': return blockDecompress<BC3unorm>( header, file );
     case 'U4CB': [[fallthrough]];
     case '1ITA': return blockDecompress<BC4unorm>( header, file );
+    case 'S4CB': return blockDecompress<BCsrgb<BC4unorm>>( header, file );
     case 'U5CB': [[fallthrough]];
     case '2ITA': return blockDecompress<BC5unorm>( header, file );
+    case 'S5CB': return blockDecompress<BCsrgb<BC5unorm>>( header, file );
     default:
         LOG( "Unknown fourCC value" );
         return {};
@@ -646,22 +679,53 @@ static ImageData handleFourCC( const DDSHeader& header, QFile* file )
 
     enum Format : uint32_t {
         DXGI_FORMAT_R8_UNORM = 61,
+
+        DXGI_FORMAT_BC1_TYPELESS = 70,
         DXGI_FORMAT_BC1_UNORM = 71,
+        DXGI_FORMAT_BC1_UNORM_SRGB = 72,
+
+        DXGI_FORMAT_BC2_TYPELESS = 73,
         DXGI_FORMAT_BC2_UNORM = 74,
+        DXGI_FORMAT_BC2_UNORM_SRGB = 75,
+
+        DXGI_FORMAT_BC3_TYPELESS = 76,
         DXGI_FORMAT_BC3_UNORM = 77,
+        DXGI_FORMAT_BC3_UNORM_SRGB = 78,
+
+        DXGI_FORMAT_BC4_TYPELESS = 79,
         DXGI_FORMAT_BC4_UNORM = 80,
+        DXGI_FORMAT_BC4_UNORM_SRGB = 81,
+
+        DXGI_FORMAT_BC5_TYPELESS = 82,
         DXGI_FORMAT_BC5_UNORM = 83,
+        DXGI_FORMAT_BC5_UNORM_SRGB = 84,
+
         DXGI_FORMAT_B5G6R5_UNORM = 85,
         DXGI_FORMAT_B5G5R5A1_UNORM = 86,
         DXGI_FORMAT_B8G8R8A8_UNORM = 87,
     };
 
     switch ( dxgiHeader.format ) {
+    case DXGI_FORMAT_BC1_TYPELESS: [[fallthrough]];
     case DXGI_FORMAT_BC1_UNORM: return blockDecompress<BC1unorm>( header, file );
+    case DXGI_FORMAT_BC1_UNORM_SRGB: return blockDecompress<BCsrgb<BC1unorm>>( header, file );
+
+    case DXGI_FORMAT_BC2_TYPELESS: [[fallthrough]];
     case DXGI_FORMAT_BC2_UNORM: return blockDecompress<BC2unorm>( header, file );
+    case DXGI_FORMAT_BC2_UNORM_SRGB: return blockDecompress<BCsrgb<BC2unorm>>( header, file );
+
+    case DXGI_FORMAT_BC3_TYPELESS: [[fallthrough]];
     case DXGI_FORMAT_BC3_UNORM: return blockDecompress<BC3unorm>( header, file );
+    case DXGI_FORMAT_BC3_UNORM_SRGB: return blockDecompress<BCsrgb<BC3unorm>>( header, file );
+
+    case DXGI_FORMAT_BC4_TYPELESS: [[fallthrough]];
     case DXGI_FORMAT_BC4_UNORM: return blockDecompress<BC4unorm>( header, file );
+    case DXGI_FORMAT_BC4_UNORM_SRGB: return blockDecompress<BCsrgb<BC4unorm>>( header, file );
+
+    case DXGI_FORMAT_BC5_TYPELESS: [[fallthrough]];
     case DXGI_FORMAT_BC5_UNORM: return blockDecompress<BC5unorm>( header, file );
+    case DXGI_FORMAT_BC5_UNORM_SRGB: return blockDecompress<BCsrgb<BC5unorm>>( header, file );
+
     case DXGI_FORMAT_B5G5R5A1_UNORM: return readAndConvert<uint16_t, &colorfn::b5g5r5a1>( header, file );
     case DXGI_FORMAT_B5G6R5_UNORM: return readAndConvert<uint16_t, &colorfn::b5g6r5>( header, file );
     case DXGI_FORMAT_B8G8R8A8_UNORM: return read_b8g8r8a8( header, file );
