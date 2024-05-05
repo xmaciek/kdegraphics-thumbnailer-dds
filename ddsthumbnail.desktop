@@ -1,7 +1,0 @@
-[Desktop Entry]
-Type=Service
-Name=DDS Files
-X-KDE-ServiceTypes=ThumbCreator
-MimeType=image/x-dds;
-X-KDE-Library=ddsthumbnail
-CacheThumbnail=true

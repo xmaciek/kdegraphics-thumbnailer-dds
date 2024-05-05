@@ -456,14 +456,14 @@ static QVector<T> readPixels( const DDSHeader& header, QFile* file )
 
     QVector<T> pixels{};
     pixels.resize( pixelCount );
-    auto it = pixels.begin();
+    auto it = pixels.data();
     assert( loopCount > 0 );
     for ( qint64 i = loopCount; i; --i ) {
         file->read( reinterpret_cast<char*>( it ), bytesToRead );
         file->skip( bytesToSkip );
         std::advance( it, pixelsToAdvance );
     }
-    assert( it == pixels.end() );
+    assert( it == pixels.data() + pixels.size() );
 
     file->close();
     return pixels;

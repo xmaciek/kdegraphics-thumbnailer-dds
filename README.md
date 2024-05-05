@@ -27,7 +27,4 @@ At some point I got considerably annoyed that KDE does not support DDS files sin
 #### Notes:
 Typeless colorspace is treated as unorm.
 
-You might want to manually adjust CMake variable `KDE_INSTALL_PLUGINDIR` because reasons.
-Possible correct path is `/usr/lib/qt/plugins/`
-
 Clearing thumbnail directory via `rm -r $HOME/.cache/thumbnails/*`
