@@ -480,11 +480,11 @@ struct alignas( 16 ) BC7 {
         case 6: return mode6[ i ];
         case 7: return mode7[ i ];
         [[unlikely]] default:
-            assert( !"BC7 block corrupted, expected at least 1 bit set in modeBits field" );
+            assert( !"BC7 block corrupted, expected at least 1 bit set in mode field" );
             return colorfn::makeARGB8888( 0xD4, 0x21, 0x3D, 0xFF );
         }
     }
 };
-static_assert( sizeof( BC7 ) == 16, "sizeof BC7unorm not equal 16" );
+static_assert( sizeof( BC7 ) == 16, "sizeof BC7 not equal 16" );
 
 } // namespace
