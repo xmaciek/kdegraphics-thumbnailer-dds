@@ -34,6 +34,7 @@
 #include <KIO/ThumbnailCreator>
 #include <QFile>
 #include <QImage>
+#include <QColorSpace>
 
 #include <algorithm>
 #include <array>
@@ -47,7 +48,6 @@
 #else
 #define LOG( msg ) {}
 #endif
-
 
 class DDSThumbnailCreator : public KIO::ThumbnailCreator
 {
@@ -65,6 +65,11 @@ public:
 K_PLUGIN_CLASS_WITH_JSON(DDSThumbnailCreator, "ddsthumbnail.json")
 
 namespace {
+
+enum Colorspace : uint32_t {
+    eUNORM,
+    eSRGB,
+};
 
 struct Byte3 {
     uint8_t channel[ 3 ];
@@ -120,26 +125,7 @@ static uint32_t r8( uint8_t c )
     return makeARGB8888( c, c, c, 0xFF );
 }
 
-static uint32_t fastApproxFromSRGB( uint32_t c )
-{
-    static const auto SRGB_LUT = []()
-    {
-        std::array<uint8_t, 256> ret;
-        std::iota( ret.begin(), ret.end(), 0 );
-        std::transform( ret.begin(), ret.end(), ret.begin(),
-            []( uint8_t c ) { return (uint8_t)( 255.0f * std::sqrt( (float)c / 255.0f ) ); }
-        );
-        return ret;
-    }();
-    uint32_t a = c >> 24;
-    uint32_t r = ( c >> 16 ) & 0xFF;
-    uint32_t g = ( c >> 8 ) & 0xFF;
-    uint32_t b = c & 0xFF;
-    return makeARGB8888( SRGB_LUT[ r ], SRGB_LUT[ g ], SRGB_LUT[ b ], a );
 }
-
-}
-
 
 struct PixelFormat {
     enum Flags : uint32_t {
@@ -267,7 +253,7 @@ struct Decompressor {
     }
 };
 
-struct BC1unorm {
+struct BC1 {
     uint16_t color0;
     uint16_t color1;
     uint32_t indexes;
@@ -294,9 +280,9 @@ struct BC1unorm {
         }
     }
 };
-static_assert( sizeof( BC1unorm ) == 8, "sizeof BC1unorm not equal 8" );
+static_assert( sizeof( BC1 ) == 8, "sizeof BC1 not equal 8" );
 
-struct BC2unorm {
+struct BC2 {
     uint16_t alphas[ 4 ];
     uint16_t color0;
     uint16_t color1;
@@ -329,9 +315,9 @@ struct BC2unorm {
         }
     }
 };
-static_assert( sizeof( BC2unorm ) == 16, "sizeof BC2unorm not equal 16" );
+static_assert( sizeof( BC2 ) == 16, "sizeof BC2 not equal 16" );
 
-struct BC4unorm {
+struct BC4 {
     uint8_t alpha0;
     uint8_t alpha1;
     uint8_t aindexes[ 6 ];
@@ -371,9 +357,9 @@ struct BC4unorm {
     }
 
 };
-static_assert( sizeof( BC4unorm ) == 8, "sizeof BC4unorm not equal 8" );
+static_assert( sizeof( BC4 ) == 8, "sizeof BC4 not equal 8" );
 
-struct BC3unorm : public BC4unorm {
+struct BC3 : public BC4 {
     uint16_t color0;
     uint16_t color1;
     uint32_t indexes;
@@ -397,11 +383,11 @@ struct BC3unorm : public BC4unorm {
         }
     }
 };
-static_assert( sizeof( BC3unorm ) == 16, "sizeof BC3unorm not equal 16" );
+static_assert( sizeof( BC3 ) == 16, "sizeof BC3 not equal 16" );
 
-struct BC5unorm {
-    BC4unorm red;
-    BC4unorm green;
+struct BC5 {
+    BC4 red;
+    BC4 green;
 
     uint32_t operator [] ( uint32_t i ) const
     {
@@ -409,17 +395,7 @@ struct BC5unorm {
         return colorfn::makeARGB8888( red.alpha( i ), green.alpha( i ), 0u, 0xFFu );
     }
 };
-static_assert( sizeof( BC5unorm ) == 16, "sizeof BC5unorm not equal 16" );
-
-template <typename TBlock>
-struct BCsrgb : public TBlock {
-    uint32_t operator [] ( uint32_t i ) const
-    {
-        static_assert( sizeof( BCsrgb<TBlock> ) == sizeof( TBlock ), "sizeof BCsrgb<TBlock> not equal to TBlock" );
-        uint32_t color = TBlock::operator[]( i );
-        return colorfn::fastApproxFromSRGB( color );
-    }
-};
+static_assert( sizeof( BC5 ) == 16, "sizeof BC5 not equal 16" );
 
 template <typename T>
 static QVector<T> readPixels( const DDSHeader& header, QFile* file )
@@ -521,14 +497,14 @@ struct Deswizzler {
             case 16: return []( uint32_t c ) -> uint8_t { return static_cast<uint8_t>( c >> 8 ); };
             case 24: return []( uint32_t c ) -> uint8_t { return static_cast<uint8_t>( c >> 16 ); };
             case 32: return []( uint32_t c ) -> uint8_t { return static_cast<uint8_t>( c >> 24 ); };
+            case 255: return []( uint32_t ) -> uint8_t { return 255; };
             default: return nullptr;
             }
         };
         rRescale = gibRescale( rm );
         gRescale = gibRescale( gm );
         bRescale = gibRescale( bm );
-        // NOTE: if alpha mask is 0, make it opaque instead
-        aRescale = am ? gibRescale( am ) : []( uint32_t ) -> uint8_t { return 255; };
+        aRescale = gibRescale( am ? am : 255 ); // NOTE: if alpha mask is 0, make it opaque instead
         rShift = rm ? __builtin_ctz( rm ) : 0;
         gShift = gm ? __builtin_ctz( gm ) : 0;
         bShift = bm ? __builtin_ctz( bm ) : 0;
@@ -572,10 +548,11 @@ struct ImageData {
     uint32_t height = 0;
     uint32_t oWidth = 0;
     uint32_t oHeight = 0;
+    Colorspace colorspace = Colorspace::eUNORM;
     bool extentNeedsResize = false;
 };
 
-template <typename TBlockType>
+template <typename TBlockType, Colorspace TColorspace = Colorspace::eUNORM>
 static ImageData blockDecompress( const DDSHeader& header, QFile* file )
 {
     assert( file );
@@ -600,6 +577,7 @@ static ImageData blockDecompress( const DDSHeader& header, QFile* file )
     ret.height = height;
     ret.oWidth = header.width;
     ret.oHeight = header.height;
+    ret.colorspace = TColorspace;
     ret.extentNeedsResize = ( header.width % 4 ) || ( header.height % 4 );
     std::generate( ret.pixels.begin(), ret.pixels.end(), Decompressor<TBlockType>( std::move( blocks ), width ) );
     return ret;
@@ -650,16 +628,16 @@ static ImageData handleFourCC( const DDSHeader& header, QFile* file )
     switch ( header.pixelFormat.fourCC ) {
     case '01XD': break;
     case '1TXD': [[fallthrough]];
-    case '2TXD': return blockDecompress<BC1unorm>( header, file );
+    case '2TXD': return blockDecompress<BC1>( header, file );
     case '3TXD': [[fallthrough]];
-    case '4TXD': return blockDecompress<BC2unorm>( header, file );
-    case '5TXD': return blockDecompress<BC3unorm>( header, file );
+    case '4TXD': return blockDecompress<BC2>( header, file );
+    case '5TXD': return blockDecompress<BC3>( header, file );
     case 'U4CB': [[fallthrough]];
-    case '1ITA': return blockDecompress<BC4unorm>( header, file );
-    case 'S4CB': return blockDecompress<BCsrgb<BC4unorm>>( header, file );
+    case '1ITA': return blockDecompress<BC4>( header, file );
+    case 'S4CB': return blockDecompress<BC4, Colorspace::eSRGB>( header, file );
     case 'U5CB': [[fallthrough]];
-    case '2ITA': return blockDecompress<BC5unorm>( header, file );
-    case 'S5CB': return blockDecompress<BCsrgb<BC5unorm>>( header, file );
+    case '2ITA': return blockDecompress<BC5>( header, file );
+    case 'S5CB': return blockDecompress<BC5, Colorspace::eSRGB>( header, file );
     default:
         LOG( "Unknown fourCC value" );
         return {};
@@ -707,24 +685,24 @@ static ImageData handleFourCC( const DDSHeader& header, QFile* file )
 
     switch ( dxgiHeader.format ) {
     case DXGI_FORMAT_BC1_TYPELESS: [[fallthrough]];
-    case DXGI_FORMAT_BC1_UNORM: return blockDecompress<BC1unorm>( header, file );
-    case DXGI_FORMAT_BC1_UNORM_SRGB: return blockDecompress<BCsrgb<BC1unorm>>( header, file );
+    case DXGI_FORMAT_BC1_UNORM: return blockDecompress<BC1>( header, file );
+    case DXGI_FORMAT_BC1_UNORM_SRGB: return blockDecompress<BC1, Colorspace::eSRGB>( header, file );
 
     case DXGI_FORMAT_BC2_TYPELESS: [[fallthrough]];
-    case DXGI_FORMAT_BC2_UNORM: return blockDecompress<BC2unorm>( header, file );
-    case DXGI_FORMAT_BC2_UNORM_SRGB: return blockDecompress<BCsrgb<BC2unorm>>( header, file );
+    case DXGI_FORMAT_BC2_UNORM: return blockDecompress<BC2>( header, file );
+    case DXGI_FORMAT_BC2_UNORM_SRGB: return blockDecompress<BC2, Colorspace::eSRGB>( header, file );
 
     case DXGI_FORMAT_BC3_TYPELESS: [[fallthrough]];
-    case DXGI_FORMAT_BC3_UNORM: return blockDecompress<BC3unorm>( header, file );
-    case DXGI_FORMAT_BC3_UNORM_SRGB: return blockDecompress<BCsrgb<BC3unorm>>( header, file );
+    case DXGI_FORMAT_BC3_UNORM: return blockDecompress<BC3>( header, file );
+    case DXGI_FORMAT_BC3_UNORM_SRGB: return blockDecompress<BC3, Colorspace::eSRGB>( header, file );
 
     case DXGI_FORMAT_BC4_TYPELESS: [[fallthrough]];
-    case DXGI_FORMAT_BC4_UNORM: return blockDecompress<BC4unorm>( header, file );
-    case DXGI_FORMAT_BC4_UNORM_SRGB: return blockDecompress<BCsrgb<BC4unorm>>( header, file );
+    case DXGI_FORMAT_BC4_UNORM: return blockDecompress<BC4>( header, file );
+    case DXGI_FORMAT_BC4_UNORM_SRGB: return blockDecompress<BC4, Colorspace::eSRGB>( header, file );
 
     case DXGI_FORMAT_BC5_TYPELESS: [[fallthrough]];
-    case DXGI_FORMAT_BC5_UNORM: return blockDecompress<BC5unorm>( header, file );
-    case DXGI_FORMAT_BC5_UNORM_SRGB: return blockDecompress<BCsrgb<BC5unorm>>( header, file );
+    case DXGI_FORMAT_BC5_UNORM: return blockDecompress<BC5>( header, file );
+    case DXGI_FORMAT_BC5_UNORM_SRGB: return blockDecompress<BC5, Colorspace::eSRGB>( header, file );
 
     case DXGI_FORMAT_B5G5R5A1_UNORM: return readAndConvert<uint16_t, &colorfn::b5g5r5a1>( header, file );
     case DXGI_FORMAT_B5G6R5_UNORM: return readAndConvert<uint16_t, &colorfn::b5g6r5>( header, file );
@@ -889,6 +867,7 @@ KIO::ThumbnailResult DDSThumbnailCreator::create( const KIO::ThumbnailRequest& r
 
     assert( data.width );
     assert( data.height );
+
     QImage image{ reinterpret_cast<const uchar*>( data.pixels.data() )
         , static_cast<int>( data.width )
         , static_cast<int>( data.height )
@@ -896,16 +875,31 @@ KIO::ThumbnailResult DDSThumbnailCreator::create( const KIO::ThumbnailRequest& r
         , nullptr // non-owning qimage
         , nullptr
     };
+
+    switch ( data.colorspace ) {
+    // also treat unorms as srgb for better visuals?
+    case Colorspace::eUNORM: image.setColorSpace( QColorSpace::SRgb ); break;
+    case Colorspace::eSRGB: image.setColorSpace( QColorSpace::SRgb ); break;
+    }
+
     if ( data.extentNeedsResize ) {
         assert( data.oWidth );
         assert( data.oHeight );
         image = image.copy( 0, 0, data.oWidth, data.oHeight );
     }
-    return KIO::ThumbnailResult::pass(image.scaled(
-        request.targetSize().width(),
-        request.targetSize().height(),
-        Qt::KeepAspectRatio
-    ));
+
+    // NOTE: in case of
+    // large image + scaling = jagged thumbnail
+    // small image + no-scaling = blurry thumbnail
+    // const auto filter = ( data.width <= 64 || data.height <= 64 )
+        // ? Qt::FastTransformation
+        // : Qt::SmoothTransformation;
+    return KIO::ThumbnailResult::pass( image.scaled(
+        request.targetSize().width()
+        , request.targetSize().height()
+        , Qt::KeepAspectRatio
+        , Qt::FastTransformation
+    ) );
 }
 
 #include "ddsthumbnail.moc"
