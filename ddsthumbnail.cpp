@@ -397,6 +397,12 @@ struct BC5 {
 };
 static_assert( sizeof( BC5 ) == 16, "sizeof BC5 not equal 16" );
 
+}
+
+#include "bc7.hpp"
+
+namespace {
+
 template <typename T>
 static QVector<T> readPixels( const DDSHeader& header, QFile* file )
 {
@@ -681,6 +687,10 @@ static ImageData handleFourCC( const DDSHeader& header, QFile* file )
         DXGI_FORMAT_B5G6R5_UNORM = 85,
         DXGI_FORMAT_B5G5R5A1_UNORM = 86,
         DXGI_FORMAT_B8G8R8A8_UNORM = 87,
+
+        DXGI_FORMAT_BC7_TYPELESS = 97,
+        DXGI_FORMAT_BC7_UNORM = 98,
+        DXGI_FORMAT_BC7_UNORM_SRGB = 99,
     };
 
     switch ( dxgiHeader.format ) {
@@ -708,6 +718,11 @@ static ImageData handleFourCC( const DDSHeader& header, QFile* file )
     case DXGI_FORMAT_B5G6R5_UNORM: return readAndConvert<uint16_t, &colorfn::b5g6r5>( header, file );
     case DXGI_FORMAT_B8G8R8A8_UNORM: return read_b8g8r8a8( header, file );
     case DXGI_FORMAT_R8_UNORM: return readAndConvert<uint8_t, &colorfn::r8>( header, file );
+
+    case DXGI_FORMAT_BC7_TYPELESS: [[fallthrough]];
+    case DXGI_FORMAT_BC7_UNORM: return blockDecompress<BC7>( header, file );
+    case DXGI_FORMAT_BC7_UNORM_SRGB: return blockDecompress<BC7, Colorspace::eSRGB>( header, file );
+
     default:
         LOG( "Unsupported dxgi format, maybe TODO" );
         return {};

@@ -25,6 +25,7 @@ kcoreaddons_add_plugin( ddsthumbnail INSTALL_NAMESPACE "kf${QT_MAJOR_VERSION}/th
 
 target_sources( ddsthumbnail PRIVATE
     ddsthumbnail.cpp
+    bc7.hpp
 )
 
 target_compile_options( ddsthumbnail PRIVATE
