@@ -470,11 +470,10 @@ static QVector<T> readBlocks( QFile* file, qint64 pixelCount )
 }
 
 struct Deswizzler {
-    using Rescale = uint8_t( uint32_t );
-    Rescale* rRescale = nullptr;
-    Rescale* gRescale = nullptr;
-    Rescale* bRescale = nullptr;
-    Rescale* aRescale = nullptr;
+    uint32_t rPopcount = 0;
+    uint32_t gPopcount = 0;
+    uint32_t bPopcount = 0;
+    uint32_t aPopcount = 0;
     uint32_t rMask = 0;
     uint32_t gMask = 0;
     uint32_t bMask = 0;
@@ -491,44 +490,42 @@ struct Deswizzler {
     , bMask( bm )
     , aMask( am )
     {
-        auto gibRescale = []( uint32_t mask ) -> Rescale*
-        {
-            switch ( __builtin_popcount( mask ) ) {
-            case 0: return []( uint32_t ) -> uint8_t { return 0; };
-            case 1: return []( uint32_t c ) -> uint8_t { return c ? 255 : 0; };
-            case 4: return []( uint32_t c ) -> uint8_t { return static_cast<uint8_t>( ( c << 4 ) | c ); };
-            case 5: return []( uint32_t c ) -> uint8_t { return static_cast<uint8_t>( ( c << 3 ) | ( c >> 2 ) ); };
-            case 6: return []( uint32_t c ) -> uint8_t { return static_cast<uint8_t>( ( c << 2 ) | ( c >> 4 ) ); };
-            case 8: return []( uint32_t c ) -> uint8_t { return static_cast<uint8_t>( c ); };
-            case 16: return []( uint32_t c ) -> uint8_t { return static_cast<uint8_t>( c >> 8 ); };
-            case 24: return []( uint32_t c ) -> uint8_t { return static_cast<uint8_t>( c >> 16 ); };
-            case 32: return []( uint32_t c ) -> uint8_t { return static_cast<uint8_t>( c >> 24 ); };
-            case 255: return []( uint32_t ) -> uint8_t { return 255; };
-            default: return nullptr;
-            }
-        };
-        rRescale = gibRescale( rm );
-        gRescale = gibRescale( gm );
-        bRescale = gibRescale( bm );
-        aRescale = gibRescale( am ? am : 255 ); // NOTE: if alpha mask is 0, make it opaque instead
+        rPopcount = __builtin_popcount( rm );
+        gPopcount = __builtin_popcount( gm );
+        bPopcount = __builtin_popcount( bm );
+        aPopcount = am ? __builtin_popcount( am ) : 255; // NOTE: if alpha mask is 0, make it opaque instead
         rShift = rm ? __builtin_ctz( rm ) : 0;
         gShift = gm ? __builtin_ctz( gm ) : 0;
         bShift = bm ? __builtin_ctz( bm ) : 0;
         aShift = am ? __builtin_ctz( am ) : 0;
     }
 
-    bool isValid() const
+    static uint8_t rescale( uint32_t popcount, uint32_t c )
     {
-        return rRescale && gRescale && bRescale && aRescale;
+        switch ( popcount ) {
+        default:
+        case 0: return 0;
+        case 1: return c ? 255 : 0;
+        case 4: return static_cast<uint8_t>( ( c << 4 ) | c );
+        case 5: return static_cast<uint8_t>( ( c << 3 ) | ( c >> 2 ) );
+        case 6: return static_cast<uint8_t>( ( c << 2 ) | ( c >> 4 ) );
+        [[likely]]
+        case 8: return static_cast<uint8_t>( c );
+        case 16: return static_cast<uint8_t>( c >> 8 );
+        case 24: return static_cast<uint8_t>( c >> 16 );
+        case 32: return static_cast<uint8_t>( c >> 24 );
+        [[likely]]
+        case 255: return 255;
+        }
     }
 
     uint32_t operator () ( uint32_t v ) const
     {
         assert( isValid() );
-        uint8_t r = rRescale( ( v & rMask ) >> rShift );
-        uint8_t g = gRescale( ( v & gMask ) >> gShift );
-        uint8_t b = bRescale( ( v & bMask ) >> bShift );
-        uint8_t a = aRescale( ( v & aMask ) >> aShift );
+        uint8_t r = rescale( rPopcount, ( v & rMask ) >> rShift );
+        uint8_t g = rescale( gPopcount, ( v & gMask ) >> gShift );
+        uint8_t b = rescale( bPopcount, ( v & bMask ) >> bShift );
+        uint8_t a = rescale( aPopcount, ( v & aMask ) >> aShift );
         return colorfn::makeARGB8888( r, g, b, a );
     }
 
@@ -765,7 +762,8 @@ static ImageData extractUncompressedPixels( const DDSHeader& header, QFile* file
         return fmt.readAndConvert( header, file );
     }
 
-    // NOTE: if "common" format lookup not found, use slower deswizzler, no guarantees its 100% accurate for every possible permutation
+    // NOTE: if "common" format lookup not found, use slower deswizzler (its about 5x slower than known conversion function),
+    // no guarantees its 100% accurate for every possible permutation
     Deswizzler deswizzler{};
     const bool hasAlphaPixels = !!( header.pixelFormat.flags & PixelFormat::fAlphaPixels );
 
@@ -785,11 +783,6 @@ static ImageData extractUncompressedPixels( const DDSHeader& header, QFile* file
     }
     else {
         LOG( "Suspicious pixel format, maybe TODO" );
-        return {};
-    }
-
-    if ( !deswizzler.isValid() ) {
-        LOG( "Very sus pixel format, possibly corrupted" );
         return {};
     }
 
