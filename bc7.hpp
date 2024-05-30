@@ -332,23 +332,21 @@ struct alignas( 16 ) BC7 {
             uint8_t a = 0;
             const uint64_t indices1 = fixupIndices( bitsIndices1, 1 );
             const uint64_t indices2 = fixupIndices( bitsIndices2, 2 );
+            const uint8_t indice1 = readIndice<2>( indices1, index );
+            const uint8_t indice2 = readIndice<3>( indices2, index );
             switch ( idxMode ) {
-            case 0: {
-                const uint8_t indiceC = readIndice<2>( indices1, index );
-                const uint8_t indiceA = readIndice<3>( indices2, index );
-                r = lerp2bit( unpackC( bitsR0, 0 ), unpackC( bitsR1, 0 ), indiceC );
-                g = lerp2bit( unpackC( bitsG0, 0 ), unpackC( bitsG1, 0 ), indiceC );
-                b = lerp2bit( unpackC( bitsB0, 0 ), unpackC( bitsB1, 0 ), indiceC );
-                a = lerp3bit( unpackA( bitsA0, 0 ), unpackA( bitsA1, 0 ), indiceA );
-            } break;
-            case 1: {
-                const uint8_t indiceC = readIndice<3>( indices2, index );
-                const uint8_t indiceA = readIndice<2>( indices1, index );
-                r = lerp3bit( unpackC( bitsR0, 0 ), unpackC( bitsR1, 0 ), indiceC );
-                g = lerp3bit( unpackC( bitsG0, 0 ), unpackC( bitsG1, 0 ), indiceC );
-                b = lerp3bit( unpackC( bitsB0, 0 ), unpackC( bitsB1, 0 ), indiceC );
-                a = lerp2bit( unpackA( bitsA0, 0 ), unpackA( bitsA1, 0 ), indiceA );
-            } break;
+            case 0:
+                r = lerp2bit( unpackC( bitsR0, 0 ), unpackC( bitsR1, 0 ), indice1 );
+                g = lerp2bit( unpackC( bitsG0, 0 ), unpackC( bitsG1, 0 ), indice1 );
+                b = lerp2bit( unpackC( bitsB0, 0 ), unpackC( bitsB1, 0 ), indice1 );
+                a = lerp3bit( unpackA( bitsA0, 0 ), unpackA( bitsA1, 0 ), indice2 );
+                break;
+            case 1:
+                r = lerp3bit( unpackC( bitsR0, 0 ), unpackC( bitsR1, 0 ), indice2 );
+                g = lerp3bit( unpackC( bitsG0, 0 ), unpackC( bitsG1, 0 ), indice2 );
+                b = lerp3bit( unpackC( bitsB0, 0 ), unpackC( bitsB1, 0 ), indice2 );
+                a = lerp2bit( unpackA( bitsA0, 0 ), unpackA( bitsA1, 0 ), indice1 );
+                break;
             }
 
             switch ( rotation ) {
@@ -408,10 +406,10 @@ struct alignas( 16 ) BC7 {
             static constexpr auto& unpack = unpackComponent<1, 0, 8>;
             const uint64_t indices = fixupIndices( bitsIndex, 3 );
             const uint8_t indice = readIndice<4>( indices, index );
-            float r = lerp4bit( unpack( bitsR0, bitsP0 ), unpack( bitsR1, bitsP1 ), indice );
-            float g = lerp4bit( unpack( bitsG0, bitsP0 ), unpack( bitsG1, bitsP1 ), indice );
-            float b = lerp4bit( unpack( bitsB0, bitsP0 ), unpack( bitsB1, bitsP1 ), indice );
-            float a = lerp4bit( unpack( bitsA0, bitsP0 ), unpack( bitsA1, bitsP1 ), indice );
+            uint8_t r = lerp4bit( unpack( bitsR0, bitsP0 ), unpack( bitsR1, bitsP1 ), indice );
+            uint8_t g = lerp4bit( unpack( bitsG0, bitsP0 ), unpack( bitsG1, bitsP1 ), indice );
+            uint8_t b = lerp4bit( unpack( bitsB0, bitsP0 ), unpack( bitsB1, bitsP1 ), indice );
+            uint8_t a = lerp4bit( unpack( bitsA0, bitsP0 ), unpack( bitsA1, bitsP1 ), indice );
             return colorfn::makeARGB8888( r, g, b, a );
         }
     };
