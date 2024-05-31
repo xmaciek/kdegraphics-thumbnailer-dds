@@ -195,30 +195,29 @@ struct DXGIHeader {
 };
 static_assert( sizeof( DXGIHeader ) == 20 );
 
-static uint32_t lerp( uint32_t a, uint32_t b, float f )
+template <size_t TWeight>
+inline uint8_t lerp( uint16_t e0, uint16_t e1 )
 {
-    const float d = static_cast<float>( b ) - static_cast<float>( a );
-    return a + static_cast<uint32_t>( d * f );
+    static_assert( TWeight <= 64 );
+    return static_cast<uint8_t>( ( ( 64 - TWeight ) * e0 + TWeight * e1 + 32 ) >> 6 );
 }
 
-static uint16_t lerp565( uint16_t lhs, uint16_t rhs, float f )
+template <size_t TWeight>
+inline uint16_t lerp565( uint16_t lhs, uint16_t rhs )
 {
     static constexpr uint16_t MASK_R5G6B5_R = 0b1111100000000000;
     static constexpr uint16_t MASK_R5G6B5_G = 0b0000011111100000;
     static constexpr uint16_t MASK_R5G6B5_B = 0b0000000000011111;
 
-    const float r0 = ( lhs & MASK_R5G6B5_R ) >> 11;
-    const float r1 = ( rhs & MASK_R5G6B5_R ) >> 11;
-    const float g0 = ( lhs & MASK_R5G6B5_G ) >> 5;
-    const float g1 = ( rhs & MASK_R5G6B5_G ) >> 5;
-    const float b0 = ( lhs & MASK_R5G6B5_B );
-    const float b1 = ( rhs & MASK_R5G6B5_B );
-    const float rd = r1 - r0;
-    const float gd = g1 - g0;
-    const float bd = b1 - b0;
-    const uint16_t r = r0 + rd * f;
-    const uint16_t g = g0 + gd * f;
-    const uint16_t b = b0 + bd * f;
+    const uint16_t r0 = ( lhs & MASK_R5G6B5_R ) >> 11;
+    const uint16_t r1 = ( rhs & MASK_R5G6B5_R ) >> 11;
+    const uint16_t g0 = ( lhs & MASK_R5G6B5_G ) >> 5;
+    const uint16_t g1 = ( rhs & MASK_R5G6B5_G ) >> 5;
+    const uint16_t b0 = ( lhs & MASK_R5G6B5_B );
+    const uint16_t b1 = ( rhs & MASK_R5G6B5_B );
+    const uint16_t r = lerp<TWeight>( r0, r1 );
+    const uint16_t g = lerp<TWeight>( g0, g1 );
+    const uint16_t b = lerp<TWeight>( b0, b1 );
     return ( ( r << 11 ) & MASK_R5G6B5_R )
         | ( ( g << 5 ) & MASK_R5G6B5_G )
         | ( b & MASK_R5G6B5_B );
@@ -271,11 +270,11 @@ struct BC1 {
         case 0: return colorfn::b5g6r5( color0 );
         case 1: return colorfn::b5g6r5( color1 );
         case 2: return color0 < color1
-            ? colorfn::b5g6r5( lerp565( color0, color1, 0.333f ) )
-            : colorfn::b5g6r5( lerp565( color0, color1, 0.5f ) );
+            ? colorfn::b5g6r5( lerp565<21>( color0, color1 ) )
+            : colorfn::b5g6r5( lerp565<32>( color0, color1 ) );
         case 3: return color0 < color1
             ? 0u
-            : colorfn::b5g6r5( lerp565( color0, color1, 0.667f ) );
+            : colorfn::b5g6r5( lerp565<43>( color0, color1 ) );
         default: return 0;
         }
     }
@@ -291,16 +290,15 @@ struct BC2 {
     uint32_t operator [] ( uint32_t i ) const
     {
         assert( i < 16 );
-        uint32_t a = alphas[ i / 4 ];
-        uint32_t alpha = 0;
-        switch ( i % 4 ) {
-        case 0: alpha = ( a & 0xF ); break;
-        case 1: alpha = ( a & 0xF0 ) >> 4; break;
-        case 2: alpha = ( a & 0xF00 ) >> 8; break;
-        case 3: alpha = ( a & 0xF000 ) >> 12; break;
-        }
         const uint32_t index = 0b11 & ( indexes >> ( i * 2 ) );
-        return ( alpha << 28 ) | ( alpha << 24 ) | colorFromIndex( index );
+        return alpha( index ) | colorFromIndex( index );
+    }
+
+    uint32_t alpha( uint32_t i ) const
+    {
+        uint32_t a = alphas[ i / 4 ];
+        uint32_t alph = a >> ( i % 4 ) * 4;
+        return ( alph << 28 ) | ( alph << 24 );
     }
 
     uint32_t colorFromIndex( uint32_t i ) const
@@ -309,8 +307,8 @@ struct BC2 {
         switch ( i ) {
         case 0: return colorfn::b5g6r5( color0 ) & removeAlpha;
         case 1: return colorfn::b5g6r5( color1 ) & removeAlpha;
-        case 2: return colorfn::b5g6r5( lerp565( color0, color1, 0.333f ) ) & removeAlpha;
-        case 3: return colorfn::b5g6r5( lerp565( color0, color1, 0.667f ) ) & removeAlpha;
+        case 2: return colorfn::b5g6r5( lerp565<21>( color0, color1 ) ) & removeAlpha;
+        case 3: return colorfn::b5g6r5( lerp565<43>( color0, color1 ) ) & removeAlpha;
         default: return 0;
         }
     }
@@ -333,12 +331,12 @@ struct BC4 {
         switch ( alphaIndice( i ) ) {
         case 0b000: return alpha0;
         case 0b001: return alpha1;
-        case 0b010: return lerp( alpha0, alpha1, b ? 1.0f / 7.0f : 0.2f );
-        case 0b011: return lerp( alpha0, alpha1, b ? 2.0f / 7.0f : 0.4f );
-        case 0b100: return lerp( alpha0, alpha1, b ? 3.0f / 7.0f : 0.6f );
-        case 0b101: return lerp( alpha0, alpha1, b ? 4.0f / 7.0f : 0.8f );
-        case 0b110: return b ? lerp( alpha0, alpha1, 5.0f / 7.0f ) : 0u;
-        case 0b111: return b ? lerp( alpha0, alpha1, 6.0f / 7.0f ) : 255u;
+        case 0b010: return b ? lerp<9>( alpha0, alpha1 ) : lerp<13>( alpha0, alpha1 );
+        case 0b011: return b ? lerp<18>( alpha0, alpha1 ) : lerp<26>( alpha0, alpha1 );
+        case 0b100: return b ? lerp<27>( alpha0, alpha1 ) : lerp<38>( alpha0, alpha1 );
+        case 0b101: return b ? lerp<37>( alpha0, alpha1 ) : lerp<51>( alpha0, alpha1 );
+        case 0b110: return b ? lerp<46>( alpha0, alpha1 ) : 0u;
+        case 0b111: return b ? lerp<55>( alpha0, alpha1 ) : 255u;
         default: return 0;
         }
     }
@@ -369,8 +367,8 @@ struct BC3 : public BC4 {
         switch ( i ) {
         case 0: return colorfn::b5g6r5( color0 ) & removeAlpha;
         case 1: return colorfn::b5g6r5( color1 ) & removeAlpha;
-        case 2: return colorfn::b5g6r5( lerp565( color0, color1, 0.333f ) ) & removeAlpha;
-        case 3: return colorfn::b5g6r5( lerp565( color0, color1, 0.667f ) ) & removeAlpha;
+        case 2: return colorfn::b5g6r5( lerp565<21>( color0, color1) ) & removeAlpha;
+        case 3: return colorfn::b5g6r5( lerp565<43>( color0, color1 ) ) & removeAlpha;
         default: return 0;
         }
     }
