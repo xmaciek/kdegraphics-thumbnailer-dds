@@ -318,21 +318,13 @@ struct BC2 {
 static_assert( sizeof( BC2 ) == 16, "sizeof BC2 not equal 16" );
 
 struct BC4 {
-    uint8_t alpha0;
-    uint8_t alpha1;
-    uint8_t aindexes[ 6 ];
+    uint64_t alpha0 : 8;
+    uint64_t alpha1 : 8;
+    uint64_t aindexes : 48;
 
     uint8_t alphaIndice( uint32_t i ) const
     {
-        uint64_t indices = 0;
-        indices |= aindexes[ 5 ]; indices <<= 8;
-        indices |= aindexes[ 4 ]; indices <<= 8;
-        indices |= aindexes[ 3 ]; indices <<= 8;
-        indices |= aindexes[ 2 ]; indices <<= 8;
-        indices |= aindexes[ 1 ]; indices <<= 8;
-        indices |= aindexes[ 0 ];
-        indices >>= i * 3;
-        return indices & 0b111;
+        return ( aindexes >> ( i * 3 ) ) & 0b111;
     }
 
     uint32_t alpha( uint32_t i ) const
