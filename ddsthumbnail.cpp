@@ -511,7 +511,6 @@ struct Deswizzler {
 
     uint32_t operator () ( uint32_t v ) const
     {
-        assert( isValid() );
         uint8_t r = rescale( rPopcount, ( v & rMask ) >> rShift );
         uint8_t g = rescale( gPopcount, ( v & gMask ) >> gShift );
         uint8_t b = rescale( bPopcount, ( v & bMask ) >> bShift );
