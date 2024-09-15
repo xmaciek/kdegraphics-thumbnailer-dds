@@ -1,4 +1,4 @@
-cmake_minimum_required( VERSION 3.16 )
+cmake_minimum_required( VERSION 3.24 )
 project( kdegraphics-thumbnailer-dds )
 
 set( CMAKE_EXPORT_COMPILE_COMMANDS ON )
@@ -36,5 +36,7 @@ target_link_libraries( ddsthumbnail
     KF${QT_MAJOR_VERSION}::KIOGui
     Qt::Gui
 )
+
+add_custom_target( nuke COMMAND rm -rv "$ENV{HOME}/.cache/thumbnails/*" )
 
 install( TARGETS ddsthumbnail DESTINATION ${KDE_INSTALL_PLUGINDIR} )

@@ -1,0 +1,25 @@
+{
+    "version": 6
+    , "cmakeMinimumRequired": { "major": 3, "minor": 24, "patch": 0 }
+
+    , "configurePresets": [
+    {
+        "name": "debug"
+        , "displayName": "Debug"
+        , "description": "Debug"
+        , "generator": "Unix Makefiles"
+        , "cacheVariables": {
+            "CMAKE_BUILD_TYPE": "Debug"
+        }
+    }
+    , {
+        "name": "release"
+        , "displayName": "Release"
+        , "description": "Release"
+        , "inherits": "debug"
+        , "cacheVariables": {
+            "CMAKE_BUILD_TYPE": "Release"
+        }
+    }
+    ]
+}

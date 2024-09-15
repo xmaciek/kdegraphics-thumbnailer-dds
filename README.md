@@ -25,7 +25,14 @@ At some point I got considerably annoyed that KDE does not support DDS files sin
 * B8G8R8A8_UNORM
 * R8_UNORM
 
+#### Bulding
+`cmake path/to/kdegraphics-thumbnailer-dds --preset release`
+`make`
+`make install`
+
 #### Notes:
 Typeless colorspace is treated as unorm.
 
-Clearing thumbnail directory via `rm -r $HOME/.cache/thumbnails/*`
+Clearing thumbnail directory via any of:
+* `rm -r $HOME/.cache/thumbnails/*`
+* `make nuke` (custom target for the above)
