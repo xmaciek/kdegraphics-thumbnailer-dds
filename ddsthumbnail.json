@@ -4,7 +4,7 @@
         "MimeTypes": [
             "image/x-dds"
         ],
-        "Name": "Microsoft DirectDraw surface"
+        "Name": "Microsoft DirectDraw surface (DDS)"
     },
     "MimeType": "image/x-dds;"
 }

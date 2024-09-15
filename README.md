@@ -25,12 +25,15 @@ At some point I got considerably annoyed that KDE does not support DDS files sin
 * B8G8R8A8_UNORM
 * R8_UNORM
 
-#### Bulding
+#### Building
 `cmake path/to/kdegraphics-thumbnailer-dds --preset release`
 `make`
 `make install`
 
 #### Notes:
+Verify you have enabled thumbnailer in Dolphin settings, goto
+`Configure`->`Configure Dolphin`->`Interface`->`Previews`->`Microsoft DirectDraw Surface (DDS)`
+
 Typeless colorspace is treated as unorm.
 
 Clearing thumbnail directory via any of:
