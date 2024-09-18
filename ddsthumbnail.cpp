@@ -544,8 +544,8 @@ struct ImageData {
     bool extentNeedsResize = false;
 };
 
-template <typename TBlockType, Colorspace TColorspace = Colorspace::eUNORM>
-static ImageData blockDecompress( const DDSHeader& header, QFile* file )
+template <typename TBlockType>
+static ImageData blockDecompress( const DDSHeader& header, QFile* file, Colorspace colorspace = Colorspace::eUNORM )
 {
     assert( file );
 
@@ -569,7 +569,7 @@ static ImageData blockDecompress( const DDSHeader& header, QFile* file )
     ret.height = height;
     ret.oWidth = header.width;
     ret.oHeight = header.height;
-    ret.colorspace = TColorspace;
+    ret.colorspace = colorspace;
     ret.extentNeedsResize = ( header.width % 4 ) || ( header.height % 4 );
     std::generate( ret.pixels.begin(), ret.pixels.end(), Decompressor<TBlockType>( std::move( blocks ), width ) );
     return ret;
@@ -626,10 +626,10 @@ static ImageData handleFourCC( const DDSHeader& header, QFile* file )
     case '5TXD': return blockDecompress<BC3>( header, file );
     case 'U4CB': [[fallthrough]];
     case '1ITA': return blockDecompress<BC4>( header, file );
-    case 'S4CB': return blockDecompress<BC4, Colorspace::eSRGB>( header, file );
+    case 'S4CB': return blockDecompress<BC4>( header, file, Colorspace::eSRGB );
     case 'U5CB': [[fallthrough]];
     case '2ITA': return blockDecompress<BC5>( header, file );
-    case 'S5CB': return blockDecompress<BC5, Colorspace::eSRGB>( header, file );
+    case 'S5CB': return blockDecompress<BC5>( header, file, Colorspace::eSRGB );
     default:
         LOG( "Unknown fourCC value" );
         return {};
@@ -682,23 +682,23 @@ static ImageData handleFourCC( const DDSHeader& header, QFile* file )
     switch ( dxgiHeader.format ) {
     case DXGI_FORMAT_BC1_TYPELESS: [[fallthrough]];
     case DXGI_FORMAT_BC1_UNORM: return blockDecompress<BC1>( header, file );
-    case DXGI_FORMAT_BC1_UNORM_SRGB: return blockDecompress<BC1, Colorspace::eSRGB>( header, file );
+    case DXGI_FORMAT_BC1_UNORM_SRGB: return blockDecompress<BC1>( header, file, Colorspace::eSRGB );
 
     case DXGI_FORMAT_BC2_TYPELESS: [[fallthrough]];
     case DXGI_FORMAT_BC2_UNORM: return blockDecompress<BC2>( header, file );
-    case DXGI_FORMAT_BC2_UNORM_SRGB: return blockDecompress<BC2, Colorspace::eSRGB>( header, file );
+    case DXGI_FORMAT_BC2_UNORM_SRGB: return blockDecompress<BC2>( header, file, Colorspace::eSRGB );
 
     case DXGI_FORMAT_BC3_TYPELESS: [[fallthrough]];
     case DXGI_FORMAT_BC3_UNORM: return blockDecompress<BC3>( header, file );
-    case DXGI_FORMAT_BC3_UNORM_SRGB: return blockDecompress<BC3, Colorspace::eSRGB>( header, file );
+    case DXGI_FORMAT_BC3_UNORM_SRGB: return blockDecompress<BC3>( header, file, Colorspace::eSRGB );
 
     case DXGI_FORMAT_BC4_TYPELESS: [[fallthrough]];
     case DXGI_FORMAT_BC4_UNORM: return blockDecompress<BC4>( header, file );
-    case DXGI_FORMAT_BC4_UNORM_SRGB: return blockDecompress<BC4, Colorspace::eSRGB>( header, file );
+    case DXGI_FORMAT_BC4_UNORM_SRGB: return blockDecompress<BC4>( header, file, Colorspace::eSRGB );
 
     case DXGI_FORMAT_BC5_TYPELESS: [[fallthrough]];
     case DXGI_FORMAT_BC5_UNORM: return blockDecompress<BC5>( header, file );
-    case DXGI_FORMAT_BC5_UNORM_SRGB: return blockDecompress<BC5, Colorspace::eSRGB>( header, file );
+    case DXGI_FORMAT_BC5_UNORM_SRGB: return blockDecompress<BC5>( header, file, Colorspace::eSRGB );
 
     case DXGI_FORMAT_B5G5R5A1_UNORM: return readAndConvert<uint16_t, &colorfn::b5g5r5a1>( header, file );
     case DXGI_FORMAT_B5G6R5_UNORM: return readAndConvert<uint16_t, &colorfn::b5g6r5>( header, file );
@@ -707,7 +707,7 @@ static ImageData handleFourCC( const DDSHeader& header, QFile* file )
 
     case DXGI_FORMAT_BC7_TYPELESS: [[fallthrough]];
     case DXGI_FORMAT_BC7_UNORM: return blockDecompress<BC7>( header, file );
-    case DXGI_FORMAT_BC7_UNORM_SRGB: return blockDecompress<BC7, Colorspace::eSRGB>( header, file );
+    case DXGI_FORMAT_BC7_UNORM_SRGB: return blockDecompress<BC7>( header, file, Colorspace::eSRGB );
 
     default:
         LOG( "Unsupported dxgi format, maybe TODO" );
