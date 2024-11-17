@@ -261,18 +261,13 @@ struct BC1 {
     {
         assert( i < 16 );
         const uint32_t index = 0b11 & ( indexes >> ( i * 2 ) );
-        return colorFromIndex( index );
-    }
-
-    uint32_t colorFromIndex( uint32_t i ) const
-    {
-        switch ( i ) {
+        switch ( index ) {
         case 0: return colorfn::b5g6r5( color0 );
         case 1: return colorfn::b5g6r5( color1 );
-        case 2: return color0 < color1
-            ? colorfn::b5g6r5( lerp565<21>( color0, color1 ) )
-            : colorfn::b5g6r5( lerp565<32>( color0, color1 ) );
-        case 3: return color0 < color1
+        case 2: return color0 <= color1
+            ? colorfn::b5g6r5( lerp565<32>( color0, color1 ) )
+            : colorfn::b5g6r5( lerp565<21>( color0, color1 ) );
+        case 3: return color0 <= color1
             ? 0u
             : colorfn::b5g6r5( lerp565<43>( color0, color1 ) );
         default: return 0;
