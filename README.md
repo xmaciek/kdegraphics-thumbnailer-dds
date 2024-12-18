@@ -20,6 +20,7 @@ At some point I got considerably annoyed that KDE does not support DDS files sin
 * BC4 (unorm, srgb, typeless)
 * BC5 (unorm, srgb, typeless)
 * BC7 (unorm, srgb, typeless)
+* B4G4R4A4_UNORM
 * B5G6R5_UNORM
 * B5G5R5A1_UNORM
 * B8G8R8A8_UNORM

@@ -90,6 +90,19 @@ static uint32_t makeARGB8888( uint32_t r, uint32_t g, uint32_t b, uint32_t a )
     return ( a << 24 ) | ( r << 16 ) | ( g << 8 ) | b;
 }
 
+static uint32_t b4g4r4a4( uint16_t c )
+{
+    uint32_t a = ( c >> 12 ) & 0xF;
+    uint32_t r = ( c >> 8 ) & 0xF;
+    uint32_t g = ( c >> 4 ) & 0xF;
+    uint32_t b = c & 0xF;
+    a |= a << 4;
+    r |= r << 4;
+    g |= g << 4;
+    b |= b << 4;
+    return makeARGB8888( r, g, b, a );
+}
+
 static uint32_t b8g8r8( Byte3 c )
 {
     return makeARGB8888( c.channel[ 2 ], c.channel[ 1 ], c.channel[ 0 ], 0xFF );
@@ -672,6 +685,8 @@ static ImageData handleFourCC( const DDSHeader& header, QFile* file )
         DXGI_FORMAT_BC7_TYPELESS = 97,
         DXGI_FORMAT_BC7_UNORM = 98,
         DXGI_FORMAT_BC7_UNORM_SRGB = 99,
+
+        DXGI_FORMAT_B4G4R4A4_UNORM = 115,
     };
 
     switch ( dxgiHeader.format ) {
@@ -704,6 +719,7 @@ static ImageData handleFourCC( const DDSHeader& header, QFile* file )
     case DXGI_FORMAT_BC7_UNORM: return blockDecompress<BC7>( header, file );
     case DXGI_FORMAT_BC7_UNORM_SRGB: return blockDecompress<BC7>( header, file, Colorspace::eSRGB );
 
+    case DXGI_FORMAT_B4G4R4A4_UNORM: return readAndConvert<uint16_t, &colorfn::b4g4r4a4>( header, file );
     default:
         LOG( "Unsupported dxgi format, maybe TODO" );
         return {};
