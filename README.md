@@ -33,7 +33,11 @@ At some point I got considerably annoyed that KDE does not support DDS files sin
 
 #### Notes:
 Verify you have enabled thumbnailer in Dolphin settings, goto
-`Configure`->`Configure Dolphin`->`Interface`->`Previews`->`Microsoft DirectDraw Surface (DDS)`
+* `Configure`->`Configure Dolphin`->`Interface`->`Previews`->`Microsoft DirectDraw Surface (DDS)`
+
+Thumbnailer doesn't work for formats listed here
+* Probably you are running into thumbnailer collision and have other dds thumbnail handler enabled.
+  For example `Images (GIF, PNG, BMP, ...)` can take alphabetic precedence in picking thumbnailer.
 
 Typeless colorspace is treated as unorm.
 
