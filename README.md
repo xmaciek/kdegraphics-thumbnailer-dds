@@ -37,7 +37,11 @@ Verify you have enabled thumbnailer in Dolphin settings, goto
 
 Thumbnailer doesn't work for formats listed here
 * Probably you are running into thumbnailer collision and have other dds thumbnail handler enabled.
-  For example `Images (GIF, PNG, BMP, ...)` can take alphabetic precedence in picking thumbnailer.
+`kio-extras` has a hardcoded list of mime types for optional `.so` files, even if `.../qt6/plugins/imageformats/kimg_dds.so` is missing the `imagethumbnail.so` will try and fail to process it.
+`kio` is choosing thumbnail handlers by last-mime-thumbnail-plugin from whatever plugin factory gives. You have 2 options, either:
+  * disable `Images (GIF, PNG, BMP, ...)`
+  * hexedit `/usr/lib/qt6/plugins/kf6/thumbcreator/imagethumbnail.so` and overwrite json metadata `x-dds` value with `x-xxx` to avoid mime selection collision.
+  * wait until KDE implements thumbnailer prioritization (extremely unlikely).
 
 Typeless colorspace is treated as unorm.
 
