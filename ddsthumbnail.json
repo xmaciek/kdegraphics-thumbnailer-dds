@@ -2,9 +2,9 @@
     "CacheThumbnail": true,
     "KPlugin": {
         "MimeTypes": [
-            "image/x-dds"
+            "image/x-dds",
+            "image/vnd.ms-dds"
         ],
         "Name": "Microsoft DirectDraw surface (DDS)"
-    },
-    "MimeType": "image/x-dds;"
+    }
 }
