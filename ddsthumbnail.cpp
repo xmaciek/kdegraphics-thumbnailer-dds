@@ -623,7 +623,7 @@ static ImageData read_b8g8r8a8( const DDSHeader& header, QFile* file )
 static ImageData handleFourCC( const DDSHeader& header, QFile* file )
 {
     assert( file );
-    assert( header.pixelFormat.flags == PixelFormat::fFourCC );
+    assert( header.pixelFormat.flags & PixelFormat::fFourCC );
 
     switch ( header.pixelFormat.fourCC ) {
     case '01XD': break;
