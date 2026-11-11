@@ -864,7 +864,7 @@ KIO::ThumbnailResult DDSThumbnailCreator::create( const KIO::ThumbnailRequest& r
         return KIO::ThumbnailResult::fail();
     }
 
-    const bool isFourCC = header.pixelFormat.flags == PixelFormat::fFourCC;
+    const bool isFourCC = !!(header.pixelFormat.flags & PixelFormat::fFourCC);
     ImageData data = isFourCC
         ? handleFourCC( header, &file )
         : extractUncompressedPixels( header, &file );
